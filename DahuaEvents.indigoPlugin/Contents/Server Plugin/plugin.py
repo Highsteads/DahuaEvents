@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.2
+# Version:     1.3
 
 try:
     import indigo
@@ -38,7 +38,7 @@ except ImportError:
     install_timestamp_filter = None
 
 import dahua_probe
-from dahua_stream import HoldTimer
+from dahua_stream import HoldTimer, drain
 from dahua_worker import CameraWorker
 
 # Camera credentials: IndigoSecrets.py first, PluginConfig as the fallback.
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.2"
+PLUGIN_VERSION = "1.3"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -316,11 +316,8 @@ class Plugin(indigo.PluginBase):
             self.sleep(DRAIN_TICK)     # do not spin on a repeating fault
 
     def _drain_statuses(self):
-        while True:
-            try:
-                address, status, detail = self._statuses.get_nowait()
-            except queue.Empty:
-                return
+        statuses, overflowed = drain(self._statuses)
+        for address, status, detail in statuses:
             for dev_id in self._by_camera.get(address, {}).values():
                 dev = indigo.devices.get(dev_id)
                 if dev is None:
@@ -333,21 +330,30 @@ class Plugin(indigo.PluginBase):
             if detail:
                 level = self.logger.warning if status != "connected" else self.logger.info
                 level(f"{address}: {status} — {detail}")
+        if overflowed:
+            self.logger.warning("status queue is running behind — a camera is flapping")
 
     def _drain_events(self):
-        """Block briefly on the queue so an idle plugin costs nothing, then take
-        whatever else is already waiting."""
+        """Block briefly so an idle plugin costs nothing, then take what is waiting.
+
+        BOUNDED. Draining until empty has no upper limit, and a camera producing
+        events faster than they are consumed would mean _expire_holds() never runs
+        — leaving every device stuck on, including the cameras behaving perfectly.
+        Anything past the cap waits for the next tick half a second later.
+        """
         try:
-            item = self._events.get(timeout=DRAIN_TICK)
+            first = self._events.get(timeout=DRAIN_TICK)
         except queue.Empty:
             return
         now = time.monotonic()
-        self._apply(item, now)
-        while True:
-            try:
-                self._apply(self._events.get_nowait(), now)
-            except queue.Empty:
-                return
+        self._apply(first, now)
+        items, overflowed = drain(self._events)
+        for item in items:
+            self._apply(item, now)
+        if overflowed:
+            self.logger.warning(
+                "event queue is running behind — a camera is producing detections "
+                "faster than they can be applied")
 
     def _apply(self, item, now):
         address, event = item

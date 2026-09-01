@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "DahuaEvents.indigoPlugin", "Contents", "Server Plugin"))
 
-from dahua_stream import Event, HoldTimer, StreamParser, parse_event_line
+from dahua_stream import (MAX_DRAIN_PER_TICK, Event, HoldTimer, StreamParser,
+                          drain, parse_event_line)
 
 # A real frame, captured from the Drive camera on 01-09-2026. Using the genuine
 # shape rather than an invented one matters: a fixture built from an assumption
@@ -256,3 +257,49 @@ class TestClassesAreIndependent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestBoundedDrain(unittest.TestCase):
+    """Termination, question 5, for the drain.
+
+    A drain that runs until its queue is empty has no upper bound. Whatever the
+    caller does afterwards never happens — here that is hold expiry, so a camera
+    flooding events would leave every device stuck on, including the cameras
+    behaving perfectly. The failure punishes the innocent ones, which is the worst
+    shape it could take.
+    """
+
+    def setUp(self):
+        import queue
+        self.q = queue.Queue()
+
+    def test_it_takes_everything_when_it_fits(self):
+        for i in range(5):
+            self.q.put(i)
+        items, overflowed = drain(self.q, limit=200)
+        self.assertEqual(items, list(range(5)))
+        self.assertFalse(overflowed)
+
+    def test_an_empty_queue_is_not_an_error(self):
+        self.assertEqual(drain(self.q), ([], False))
+
+    def test_it_stops_at_the_limit_and_says_so(self):
+        for i in range(500):
+            self.q.put(i)
+        items, overflowed = drain(self.q, limit=200)
+        self.assertEqual(len(items), 200)
+        self.assertTrue(overflowed, "falling behind must be reported, not silent")
+        self.assertEqual(self.q.qsize(), 300, "the rest must be left for the next tick")
+
+    def test_a_flood_still_returns(self):
+        """The whole point: it must RETURN, so the caller gets to expire holds."""
+        for i in range(100_000):
+            self.q.put(i)
+        items, overflowed = drain(self.q)
+        self.assertEqual(len(items), MAX_DRAIN_PER_TICK)
+        self.assertTrue(overflowed)
+
+    def test_a_zero_or_negative_limit_takes_nothing_rather_than_looping(self):
+        self.q.put("x")
+        self.assertEqual(drain(self.q, limit=0)[0], [])
+        self.assertEqual(drain(self.q, limit=-5)[0], [])

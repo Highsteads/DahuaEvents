@@ -17,6 +17,7 @@
 # Date:        01-09-2026
 # Version:     1.0
 
+import queue as _queue
 import re
 
 # Event lines look like:
@@ -175,3 +176,26 @@ class HoldTimer:
         """When tick() next has something to do, or None. Lets the caller sleep
         sensibly instead of spinning."""
         return self._expires_at
+
+
+# A drain that runs until its queue is empty has no upper bound: if a camera
+# produces events faster than they are consumed, the drain never returns and
+# whatever the caller does AFTERWARDS never happens. Here that would be hold
+# expiry, so a flooding camera would leave every device stuck on — the failure
+# hurts the cameras that are behaving, which is the worst shape it could take.
+MAX_DRAIN_PER_TICK = 200
+
+
+def drain(q, limit=MAX_DRAIN_PER_TICK):
+    """Take up to `limit` items from a queue without blocking.
+
+    Returns (items, overflowed). `overflowed` says the queue still had more, so a
+    caller can say so rather than quietly falling behind for ever.
+    """
+    items = []
+    for _ in range(max(0, limit)):
+        try:
+            items.append(q.get_nowait())
+        except _queue.Empty:
+            return items, False
+    return items, not q.empty()
