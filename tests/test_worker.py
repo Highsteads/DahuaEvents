@@ -26,22 +26,44 @@ from dahua_worker import CameraWorker
 
 
 class FakeResponse:
-    """Hands out chunks then behaves however the test asks."""
+    """Stands in for the HTTP response.
+
+    The worker now select()s on the response before reading, so the fake has to be
+    selectable — hence a real pipe underneath. Faking `fileno()` with an arbitrary
+    number would make select() lie, and the tests would be exercising a shape the
+    production code never meets.
+    """
 
     def __init__(self, chunks, then=None):
         self._chunks = list(chunks)
         self._then = then
         self.closed = False
+        # A real pipe: readable exactly when there is something queued.
+        self._r, self._w = os.pipe()
+        if self._chunks or self._then == "raise":
+            os.write(self._w, b"x")          # make select() report readable
 
-    def read(self, _n):
+    def fileno(self):
+        return self._r
+
+    def read1(self, _n):
         if self._chunks:
+            if not self._chunks[1:] and self._then != "raise":
+                pass
             return self._chunks.pop(0)
         if self._then == "raise":
             raise OSError("stream died")
-        return b""                      # empty = camera closed the stream
+        return b""                            # empty = camera closed the stream
+
+    read = read1
 
     def close(self):
         self.closed = True
+        for fd in (self._r, self._w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 class WorkerHarness:
@@ -186,3 +208,47 @@ class TestStopIsHonoured(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestShutdownIsPrompt(unittest.TestCase):
+    """The bug that got the plugin force-killed twice, asserted so it cannot return.
+
+    stop() must NOT close the response. close() blocks until any pending read
+    finishes, so calling it from the plugin's thread made shutdown wait out the
+    socket timeout — measured at 25.8s for five cameras, against Indigo's 20s
+    patience. The worker notices the stop Event within SELECT_TICK and closes its
+    own socket on the way out, which is the only thread that can do so without
+    blocking.
+    """
+
+    def test_stop_does_not_close_the_response_from_the_calling_thread(self):
+        response = FakeResponse([], then=None)
+        with WorkerHarness(responses=[response]) as h:
+            h.worker.start()
+            deadline = time.time() + 3
+            while time.time() < deadline and not h.statuses:
+                time.sleep(0.01)
+            h.worker.stop()
+            self.assertFalse(response.closed,
+                             "stop() must not close the response — close() blocks on a "
+                             "pending read and that is what stalled shutdown")
+
+    def test_the_worker_exits_within_about_one_select_tick(self):
+        with WorkerHarness(responses=[FakeResponse([], then=None)]) as h:
+            h.worker.start()
+            deadline = time.time() + 3
+            while time.time() < deadline and not h.statuses:
+                time.sleep(0.01)
+            began = time.time()
+            h.worker.stop()
+            h.worker.join(timeout=5)
+            elapsed = time.time() - began
+            self.assertFalse(h.worker.is_alive())
+            self.assertLess(elapsed, dahua_worker.SELECT_TICK * 3,
+                            f"took {elapsed:.2f}s; shutdown must be about one select tick")
+
+    def test_the_select_tick_is_well_inside_indigos_patience(self):
+        """Indigo force-kills a plugin that has not quit in about 20 seconds. The
+        tick bounds how long ONE worker can ignore a stop, and they wind down in
+        parallel, so this is the whole shutdown cost."""
+        self.assertLessEqual(dahua_worker.SELECT_TICK, 2.0)

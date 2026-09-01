@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.4
+**Version:** 1.5
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -90,6 +90,12 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.5
+- **Actually fixes the force-kill on restart that 1.4 only half-fixed.** The worker threads
+  blocked inside a socket read, and closing the connection from another thread waits for that
+  read rather than cancelling it — so shutting down waited out the socket timeout. Measured
+  against five cameras: **25.8 seconds before, 0.79 seconds after.**
 
 ### 1.4
 - **Fixes the plugin having to be force-killed on upgrade or restart.** Indigo raises its stop

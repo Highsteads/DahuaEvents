@@ -16,7 +16,9 @@
 # Date:        01-09-2026
 # Version:     1.0
 
+import select
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -35,6 +37,13 @@ BACKOFF_MAX   = 60
 # dead even though the socket is still nominally open — the classic half-open TCP
 # case that a plain blocking read never notices.
 READ_TIMEOUT  = 20
+
+# How long we ever sit inside select() before looking at the stop flag again. This
+# is the single number that decides how fast the plugin can quit, because a thread
+# blocked in read() cannot be interrupted: closing the response from another thread
+# WAITS for the pending read, so a 20s read timeout meant a 20s shutdown and Indigo
+# force-killed the process. Measured 01-09-2026: 25.8s to stop five workers.
+SELECT_TICK   = 1.0
 CHUNK         = 512
 
 CONNECTED    = "connected"
@@ -81,15 +90,39 @@ class CameraWorker(threading.Thread):
         return opener.open(url, timeout=READ_TIMEOUT)
 
     def _pump(self):
-        """Read until the stream dies or we are asked to stop. Returns normally on
-        a clean stop; raises on anything else so the caller can back off."""
+        """Read until the stream dies or we are asked to stop.
+
+        NEVER blocks in read(). select() waits for the socket to become readable,
+        with a short tick, so the stop flag is looked at at least once a second and
+        read() only ever runs when bytes are already there. A thread blocked in
+        read() cannot be interrupted — and close() from another thread waits for it
+        rather than cancelling it, which is what made shutdown take 20+ seconds and
+        got the plugin force-killed.
+
+        Silence is normal and is NOT an error: the camera sends a heartbeat every
+        five seconds, so most ticks legitimately have nothing to read. Only a run of
+        silence longer than several heartbeats means the connection is really dead.
+        """
         parser = StreamParser()
         self._response = self._open()
         self._set_status(CONNECTED)
+        last_data = time.monotonic()
+
         while not self._stop.is_set():
-            chunk = self._response.read(CHUNK)
+            try:
+                readable, _, _ = select.select([self._response], [], [], SELECT_TICK)
+            except (OSError, ValueError):
+                # The response was closed under us — that is a stop, not a fault.
+                return
+            if not readable:
+                if time.monotonic() - last_data > READ_TIMEOUT:
+                    raise OSError("no heartbeat from the camera")
+                continue
+
+            chunk = self._response.read1(CHUNK)
             if not chunk:
                 raise OSError("camera closed the stream")
+            last_data = time.monotonic()
             for event in parser.feed(chunk.decode("utf-8", errors="replace")):
                 self.events_seen += 1
                 self._queue.put((self.address, event))
@@ -132,6 +165,12 @@ class CameraWorker(threading.Thread):
             self._response = None
 
     def stop(self):
-        """Ask the thread to finish. The stop Event is shared, so this is belt and
-        braces for a single worker; closing the response unblocks a pending read."""
-        self._close_response()
+        """Ask the thread to finish.
+
+        Deliberately does NOT close the response. close() blocks until any pending
+        read completes, so calling it from the plugin's thread made shutdown wait
+        out the socket timeout — the very thing this is supposed to avoid. The
+        worker notices the stop Event within SELECT_TICK and closes its own socket
+        on the way out, which is the only thread that can do it without blocking.
+        """
+        self._stop.set()
