@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.1
+# Version:     1.2
 
 try:
     import indigo
@@ -32,9 +32,10 @@ from datetime import datetime
 
 _sys.path.insert(0, _os.getcwd())   # bundled alongside this file in Server Plugin/
 try:
-    from plugin_utils import log_startup_banner
+    from plugin_utils import install_timestamp_filter, log_startup_banner
 except ImportError:
     log_startup_banner = None
+    install_timestamp_filter = None
 
 import dahua_probe
 from dahua_stream import HoldTimer
@@ -58,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.1"
+PLUGIN_VERSION = "1.2"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -115,6 +116,13 @@ class Plugin(indigo.PluginBase):
 
     def __init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs):
         super().__init__(pluginId, pluginDisplayName, pluginVersion, pluginPrefs)
+
+        # Every CliveS plugin prefixes its log lines with [HH:MM:SS.mmm]. Without it
+        # this plugin's lines are the only ones in the event log you cannot time,
+        # which matters here more than most: the whole point of the hold is a
+        # duration, and it cannot be read off an untimed line.
+        if install_timestamp_filter:
+            install_timestamp_filter(self)
 
         # Credentials resolve once here so every path uses the same answer.
         self.cam_user = DAHUA_USER or pluginPrefs.get("dahuaUser", "")

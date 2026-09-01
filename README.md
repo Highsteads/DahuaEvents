@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.1
+**Version:** 1.2
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -48,12 +48,51 @@ If you do not use `IndigoSecrets.py`, leave it out entirely and fill the same tw
 2. Unzip it — you will get `DahuaEvents.indigoPlugin`.
 3. Double-click `DahuaEvents.indigoPlugin` and Indigo will install it.
 
-## Status
+## Setting it up
 
-Stage 1 of 4. Capability probing and the diagnostic menus work. The event stream, the device
-model and the detection hold follow — see `SPEC.md` for the full plan.
+1. Install the plugin and, if you do not use `IndigoSecrets.py`, put the camera username and
+   password into **Plugins -> DahuaEvents -> Configure**.
+2. **Plugins -> DahuaEvents -> Dahua Camera...** Give the camera a name and its address. You get
+   two devices, `<name> Person` and `<name> Vehicle`.
+3. Repeat for each camera.
+
+Use **Probe a Camera...** first if you are unsure whether a camera can do this. It reports one of
+four answers, and says why:
+
+| | Meaning |
+|---|---|
+| capable | advertises human and vehicle detection, and it is switched on |
+| disabled | it can, but Smart Motion Detection or ordinary motion detection is off at the camera |
+| unsupported | the firmware cannot emit these events, whatever the settings say |
+| unreachable | no answer — wrong address, wrong credentials, or the camera is down |
+
+A camera that cannot do it still gets devices. They sit in an error state explaining why, so
+nothing disappears silently, and if you update the firmware or replace the camera they simply
+start working.
+
+## How it behaves
+
+The camera reports the start and end of a detection, often many times as somebody moves through
+frame. The plugin turns that into one clean detection: the device switches on at the first
+report and stays on until the hold expires after the last one. Twenty seconds by default,
+adjustable globally and per camera.
+
+Each camera gets one connection, shared by its two devices. If it drops, the plugin reconnects
+with a backoff that caps at a minute. A camera whose firmware cannot emit these events is not
+retried at all — it is marked and left alone, because it will never start working by being
+asked more often.
+
+## A note on grouped devices
+
+The two devices for a camera are created as a group. Deleting one in Indigo will offer to delete
+the whole group, and recreating them gives them **new device IDs** — so any trigger, control page
+or script pointing at the old ones will quietly stop working. Rename them freely; just be careful
+about deleting.
 
 ## Changelog
+
+### 1.2
+- Log lines now carry the `[HH:MM:SS.mmm]` prefix every other plugin here uses.
 
 ### 1.1
 - Live detections. A worker thread per camera holds the event stream open; the plugin's main
