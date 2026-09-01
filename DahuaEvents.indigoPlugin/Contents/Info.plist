@@ -12,9 +12,17 @@
          (25-05-2026) it is controlled by the Indigo team — leave it at 1.0.0. -->
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
-    <!-- Required: becomes the "About DahuaEvents" menu item. -->
+    <!-- Required: becomes the "About DahuaEvents" menu item. This is an ARRAY of
+         dicts keyed CFBundleURLName, NOT a bare string — Indigo rejects the whole
+         bundle with InstallPlugin() caught exception: LowLevelBadParameterError
+         if the shape is wrong, naming nothing. -->
     <key>CFBundleURLTypes</key>
-    <string>https://github.com/Highsteads/DahuaEvents</string>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>https://github.com/Highsteads/DahuaEvents</string>
+        </dict>
+    </array>
     <!-- The version Indigo actually displays. Digits and dots only. -->
     <key>PluginVersion</key>
     <string>1.0</string>
