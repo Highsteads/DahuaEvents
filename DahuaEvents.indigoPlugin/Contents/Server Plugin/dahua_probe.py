@@ -277,3 +277,59 @@ def firmware(address, user, password, timeout=HTTP_TIMEOUT):
         return ""
     m = re.search(r"version=([^\s,]+(?:,build:[\d-]+)?)", body)
     return m.group(1) if m else ""
+
+
+# A dialog cannot wait: Indigo gives a UI callback about thirty seconds before it
+# gives up and leaves the dialog broken. Probing four classes one at a time would
+# re-fetch the same three documents four times over, so this fetches each ONCE and
+# then answers every question from them. Four requests, bounded, whatever the
+# camera does.
+DIALOG_TIMEOUT = 4
+
+
+def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
+    """What can this camera actually do? Returns {class: (verdict, reason)}.
+
+    Answers for every class the plugin knows, so a dialog can show the whole
+    picture at once rather than making the user discover it a device at a time.
+    NEVER raises: a dialog that throws is worse than one that reports a problem.
+    """
+    classes = ["person", "vehicle"] + list(IVS_CODES)
+    try:
+        if not address:
+            return {k: (UNREACHABLE, "no address given") for k in classes}
+        if not user or not password:
+            return {k: (UNREACHABLE, "no camera credentials") for k in classes}
+
+        events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
+                       user, password, timeout)
+        if events is None:
+            return {k: (UNREACHABLE, "no answer from the camera") for k in classes}
+
+        smd    = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=SmartMotionDetect",
+                       user, password, timeout)
+        motion = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=MotionDetect",
+                       user, password, timeout)
+        rules  = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
+                       user, password, timeout)
+
+        smd_verdict = assess(events, smd, motion)
+        out = {"person": smd_verdict, "vehicle": smd_verdict}
+        for klass in IVS_CODES:
+            out[klass] = assess_ivs(events, rules, klass)
+        return out
+    except Exception as exc:                    # noqa: BLE001 - a dialog must not throw
+        return {k: (UNREACHABLE, f"unexpected error: {exc!r}") for k in classes}
+
+
+def summarise(caps):
+    """One short line per class, for a dialog field. Ordered, so it reads the same
+    every time and a changed answer is noticeable."""
+    labels = {"person": "People", "vehicle": "Vehicles",
+              "crossline": "Tripwire", "crossregion": "Intrusion"}
+    marks  = {CAPABLE: "yes", DISABLED: "off at the camera",
+              NO_RULE: "no rule drawn", UNSUPPORTED: "not supported",
+              UNREACHABLE: "could not tell"}
+    return " · ".join(f"{labels[k]}: {marks.get(caps[k][0], '?')}"
+                      for k in ("person", "vehicle", "crossline", "crossregion")
+                      if k in caps)

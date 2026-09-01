@@ -25,7 +25,7 @@
     </array>
     <!-- The version Indigo actually displays. Digits and dots only. -->
     <key>PluginVersion</key>
-    <string>1.7</string>
+    <string>1.8</string>
     <key>ServerApiVersion</key>
     <string>3.0</string>
 </dict>

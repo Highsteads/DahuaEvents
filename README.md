@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.7
+**Version:** 1.8
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -52,8 +52,10 @@ If you do not use `IndigoSecrets.py`, leave it out entirely and fill the same tw
 
 1. Install the plugin and, if you do not use `IndigoSecrets.py`, put the camera username and
    password into **Plugins -> DahuaEvents -> Configure**.
-2. **Plugins -> DahuaEvents -> Dahua Camera...** Give the camera a name and its address. You get
-   two devices, `<name> Person` and `<name> Vehicle`.
+2. **Plugins -> DahuaEvents -> Dahua Camera...** Give the camera a name and its address, then
+   press **Check This Camera**. It reports what that camera can do and ticks the detections it
+   supports. Close the dialog and you get a device per ticked detection, named
+   `<camera> Person`, `<camera> Vehicle` and so on.
 3. Repeat for each camera.
 
 Use **Probe a Camera...** first if you are unsure whether a camera can do this. It reports one of
@@ -105,6 +107,11 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.8
+- **The camera dialog now has a Check This Camera button.** It asks the camera what it can do and
+  ticks the right boxes for you, instead of leaving you to pick, create devices and only then
+  discover which of them work.
 
 ### 1.7
 - Sensor actions are handled. Sending on, off or a status request to one of these devices used

@@ -33,6 +33,16 @@
                 <Description>Leave blank to use the plugin default</Description>
             </Field>
 
+            <Field id="sepCheck" type="separator"/>
+            <Field id="checkCamera" type="button">
+                <Label>Not sure what this camera can do?</Label>
+                <Title>Check This Camera</Title>
+                <CallbackMethod>checkCamera</CallbackMethod>
+            </Field>
+            <Field id="capabilitySummary" type="textfield" readonly="YES">
+                <Label>Camera reports:</Label>
+            </Field>
+
             <Field id="sepClasses" type="separator"/>
             <Field id="classesLabel" type="label">
                 <Label>Which detections should this camera provide? People and vehicles need Smart Motion Detection, which most cameras from about 2022 onward have. Tripwire and intrusion are the older generation's equivalent and need a line or zone drawn in the camera's own web interface before they report anything.</Label>

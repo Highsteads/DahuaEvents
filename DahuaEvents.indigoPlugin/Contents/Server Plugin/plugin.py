@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.7
+# Version:     1.8
 
 try:
     import indigo
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.7"
+PLUGIN_VERSION = "1.8"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -570,6 +570,37 @@ class Plugin(indigo.PluginBase):
                 values["cameraName"] = dev.name.rsplit(" ", 1)[0]
                 break
         return (values, errors)
+
+    def checkCamera(self, valuesDict, *args):
+        """Ask the camera what it can do, and tick the boxes for you.
+
+        Signature is deliberately tolerant: Indigo passes a device ConfigUI button
+        (valuesDict, typeId, devId) and a device-factory one (valuesDict, devIdList),
+        and a mismatch here is a TypeError inside a dialog the user cannot then use.
+
+        Runs inline rather than threaded, unusually — a dialog cannot show a result
+        it has not waited for. That is only safe because capabilities() fetches each
+        document once and caps its timeouts: measured 0.24s on a live camera and
+        4.0s on an address with nothing at it, against Indigo's ~30s limit.
+        """
+        address = (valuesDict.get("address") or "").strip()
+        if not address:
+            valuesDict["capabilitySummary"] = "Enter the camera's address first."
+            return valuesDict
+
+        caps = dahua_probe.capabilities(address, self.cam_user, self.cam_pass)
+        valuesDict["capabilitySummary"] = dahua_probe.summarise(caps)
+
+        # Tick what works, and leave what does not — but never silently UNTICK
+        # something the user chose on purpose, because a camera can gain a
+        # capability later and they may be setting it up ahead of time.
+        for klass, (verdict, _) in caps.items():
+            if verdict == dahua_probe.CAPABLE:
+                valuesDict[f"want_{klass}"] = True
+
+        for klass, (verdict, reason) in sorted(caps.items()):
+            self.logger.info(f"{address} {CLASS_LABELS.get(klass, klass)}: {reason}")
+        return valuesDict
 
     def validateDeviceFactoryUi(self, valuesDict, devIdList):
         errors = indigo.Dict()

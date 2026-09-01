@@ -195,6 +195,14 @@ IVS_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
 NO_IVS_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
     ["AudioAnomaly", "MoveDetection", "SmartMotionHuman", "SmartMotionVehicle", "VideoMotion"]))
 
+# Everything: SMD and BOTH IVS codes. Use this when a test needs each class to
+# reach a DIFFERENT verdict. CAPABLE_EVENTS is not that fixture — it carries
+# CrossLineDetection but not CrossRegionDetection, which has now caught me twice
+# writing an assertion that looked right and tested the opposite.
+ALL_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
+    ["AudioAnomaly", "CrossLineDetection", "CrossRegionDetection", "MoveDetection",
+     "SmartMotionHuman", "SmartMotionVehicle", "VideoMotion"]))
+
 
 class TestParseRules(unittest.TestCase):
 
@@ -257,3 +265,87 @@ class TestAssessIvs(unittest.TestCase):
         finally:
             dp.fetch = original
         self.assertEqual(verdict, dp.UNREACHABLE)
+
+
+class TestCapabilities(unittest.TestCase):
+    """One round of fetches answering every class, for the setup dialog.
+
+    Indigo gives a UI callback about thirty seconds. Probing four classes
+    separately would fetch the same three documents four times; this must not.
+    """
+
+    def _stub(self, events=None, smd=None, motion=None, rules=None):
+        bodies = {
+            "getExposureEvents": events,
+            "SmartMotionDetect": smd,
+            "name=MotionDetect": motion,
+            "VideoAnalyseRule": rules,
+        }
+        self.fetches = []
+
+        def fake(address, path, user, password, timeout=None):
+            self.fetches.append(path)
+            for key, body in bodies.items():
+                if key in path:
+                    return body
+            return None
+        return fake
+
+    def test_it_fetches_each_document_exactly_once(self):
+        original, dp.fetch = dp.fetch, self._stub(
+            ALL_EVENTS, SMD_ON, MD_ON, RULES_WITH_TRIPWIRE)
+        try:
+            dp.capabilities("192.168.1.64", "u", "p")
+        finally:
+            dp.fetch = original
+        self.assertEqual(len(self.fetches), 4,
+                         f"expected 4 requests, made {len(self.fetches)}: {self.fetches}")
+        self.assertEqual(len(set(self.fetches)), 4, "no document should be fetched twice")
+
+    def test_it_answers_every_class(self):
+        # ALL_EVENTS on purpose: this asserts three DIFFERENT verdicts, which needs
+        # a camera advertising both IVS codes while only one has a rule.
+        original, dp.fetch = dp.fetch, self._stub(
+            ALL_EVENTS, SMD_ON, MD_ON, RULES_WITH_TRIPWIRE)
+        try:
+            caps = dp.capabilities("192.168.1.64", "u", "p")
+        finally:
+            dp.fetch = original
+        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion"})
+        self.assertEqual(caps["person"][0], dp.CAPABLE)
+        self.assertEqual(caps["crossline"][0], dp.CAPABLE)
+        self.assertEqual(caps["crossregion"][0], dp.NO_RULE)
+
+    def test_an_unreachable_camera_answers_every_class_rather_than_some(self):
+        """A partial answer would leave classes silently unmentioned, and an
+        unmentioned class reads as a working one."""
+        original, dp.fetch = dp.fetch, (lambda *a, **k: None)
+        try:
+            caps = dp.capabilities("192.168.1.64", "u", "p")
+        finally:
+            dp.fetch = original
+        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion"})
+        self.assertTrue(all(v == dp.UNREACHABLE for v, _ in caps.values()))
+
+    def test_it_never_raises(self):
+        def hostile(*a, **k):
+            raise RuntimeError("kernel said no")
+        original, dp.fetch = dp.fetch, hostile
+        try:
+            caps = dp.capabilities("192.168.1.64", "u", "p")
+        except Exception as exc:                  # noqa: BLE001 - that IS the assertion
+            self.fail(f"capabilities() raised {exc!r} — a dialog must not throw")
+        finally:
+            dp.fetch = original
+        self.assertTrue(all(v == dp.UNREACHABLE for v, _ in caps.values()))
+
+    def test_summarise_names_all_four_in_a_stable_order(self):
+        original, dp.fetch = dp.fetch, self._stub(
+            ALL_EVENTS, SMD_ON, MD_ON, RULES_WITH_TRIPWIRE)
+        try:
+            line = dp.summarise(dp.capabilities("192.168.1.64", "u", "p"))
+        finally:
+            dp.fetch = original
+        self.assertEqual(line.index("People") < line.index("Vehicles")
+                         < line.index("Tripwire") < line.index("Intrusion"), True)
+        self.assertIn("no rule drawn", line)
