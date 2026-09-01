@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.3
+# Version:     1.4
 
 try:
     import indigo
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.3"
+PLUGIN_VERSION = "1.4"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -76,6 +76,10 @@ MODEL_NAME  = "Dahua Camera"
 # The drain tick. Short enough that a hold expires close to its moment, long
 # enough that an idle plugin costs nothing measurable.
 DRAIN_TICK = 0.5
+
+# Total time shutdown will spend waiting for workers, however many cameras
+# there are. Indigo force-kills a plugin that does not quit politely.
+SHUTDOWN_BUDGET = 2.0
 
 
 # ============================================================
@@ -180,8 +184,30 @@ class Plugin(indigo.PluginBase):
         self._stop_all_workers()
 
     def _stop_all_workers(self):
-        for address in list(self._workers):
-            self._stop_worker(address)
+        """Signal everything FIRST, then join against ONE shared budget.
+
+        Stopping cameras one at a time meant up to 3s of join each, so five cameras
+        could hold shutdown for 15 seconds — past Indigo's patience, which is why an
+        upgrade force-killed the process. Signalling first lets every worker wind
+        down in parallel; the joins are then a formality. They are daemon threads, so
+        a straggler dies with the process and is not worth waiting for.
+        """
+        for stop in list(self._stops.values()):
+            stop.set()
+        for worker in list(self._workers.values()):
+            worker.stop()                 # closes the socket, unblocking a pending read
+
+        deadline = time.monotonic() + SHUTDOWN_BUDGET
+        for worker in list(self._workers.values()):
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        still_running = [w.name for w in self._workers.values() if w.is_alive()]
+        self._workers.clear()
+        self._stops.clear()
+        if still_running:
+            # Say it rather than leaving a silent delay for someone to wonder about.
+            self.logger.debug(f"{len(still_running)} worker(s) still winding down; "
+                              f"they are daemon threads and will not hold anything up")
 
     def closedPrefsConfigUi(self, valuesDict, userCancelled):
         """Mirror the startup guards, or a re-save leaves the plugin on stale values."""
@@ -283,13 +309,20 @@ class Plugin(indigo.PluginBase):
         worker.start()
 
     def _stop_worker(self, address):
+        """Stop one camera's worker.
+
+        Called from deviceStopComm, which Indigo also runs for every device while
+        shutting the plugin down — so this sits on the same critical path as the
+        polite-quit deadline. It is a daemon thread; waiting three seconds for it
+        bought nothing and risked everything.
+        """
         stop = self._stops.pop(address, None)
         worker = self._workers.pop(address, None)
         if stop:
             stop.set()
         if worker:
             worker.stop()
-            worker.join(timeout=3)
+            worker.join(timeout=SHUTDOWN_BUDGET)
 
     # --------------------------------------------------------
     # The drain — the ONLY place a device state is written
@@ -298,6 +331,12 @@ class Plugin(indigo.PluginBase):
     def runConcurrentThread(self):
         try:
             while True:
+                # self.StopThread is raised ONLY from inside self.sleep() — that is
+                # the whole mechanism (plugin_base.py:491). This loop does its own
+                # waiting on the queue, so without this call it would never learn to
+                # stop, and Indigo would force-kill the process on every upgrade.
+                # sleep(0) returns instantly when running and raises when stopping.
+                self.sleep(0)
                 self._drain_once()
         except self.StopThread:
             pass
