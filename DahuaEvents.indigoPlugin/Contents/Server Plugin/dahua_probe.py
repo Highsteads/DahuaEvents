@@ -27,6 +27,18 @@ import urllib.request
 
 SMART_CODES = ("SmartMotionHuman", "SmartMotionVehicle")
 
+# The older generation cannot do SMD but does offer IVS rules — a tripwire
+# (CrossLineDetection) or an intrusion zone (CrossRegionDetection), both of which
+# can be filtered to people or vehicles. The catch is that IVS only emits anything
+# once a rule has been DRAWN on the camera, which the advertised event list does
+# not tell you. Treating "firmware supports it" as "it works" would recreate
+# exactly the trap this module exists to avoid, one generation down.
+IVS_CODES = {
+    "crossline":   "CrossLineDetection",
+    "crossregion": "CrossRegionDetection",
+}
+NO_RULE      = "no_rule"        # firmware can, but nothing is configured to fire
+
 # Verdicts. Anything other than CAPABLE means "do not expect events from this camera",
 # and each carries a reason the user can act on.
 CAPABLE      = "capable"        # advertises the smart codes and is switched on
@@ -69,6 +81,61 @@ def parse_enable_flag(text, param):
     if not m:
         return None
     return m.group(1).strip().lower() == "true"
+
+
+def parse_rules(rule_text):
+    """Return [(class, enabled, name)] from a VideoAnalyseRule config body.
+
+    Lines look like:
+        table.VideoAnalyseRule[0][2].Class=CrossLineDetection
+        table.VideoAnalyseRule[0][2].Enable=true
+    Slots are sparse and unordered, so they are gathered by index rather than
+    assumed adjacent.
+    """
+    if not rule_text:
+        return []
+    slots = {}
+    for m in re.finditer(r"VideoAnalyseRule\[(\d+)\]\[(\d+)\]\.(Class|Enable|Name)=(\S*)",
+                         rule_text):
+        ch, idx, key, val = m.groups()
+        slots.setdefault((ch, idx), {})[key] = val
+    return [(d.get("Class", ""), d.get("Enable", "").lower() == "true", d.get("Name", ""))
+            for _, d in sorted(slots.items())]
+
+
+def assess_ivs(event_text, rule_text, klass):
+    """Can this camera emit the IVS event for `klass`? Returns (verdict, reason).
+
+    Two separate questions, and conflating them is the whole risk:
+      1. does the firmware advertise the event at all
+      2. is there an ENABLED rule of that class drawn on the camera
+    A camera can pass the first and fail the second for ever, sitting there looking
+    perfectly healthy and never firing once.
+    """
+    code = IVS_CODES.get(klass)
+    if code is None:
+        return UNSUPPORTED, f"unknown detection class {klass!r}"
+
+    codes = parse_event_list(event_text)
+    if not codes:
+        return UNREACHABLE, "camera did not return an event list"
+    if code not in codes:
+        return UNSUPPORTED, f"firmware does not advertise {code}"
+
+    if rule_text is None:
+        return UNREACHABLE, "could not read the camera's analytics rules"
+
+    rules = parse_rules(rule_text)
+    matching = [r for r in rules if r[0] == code]
+    if not matching:
+        return (NO_RULE,
+                f"the firmware supports {code} but no such rule is drawn on the camera — "
+                f"add one in the camera's own web interface, then restart this device")
+    if not any(enabled for _, enabled, _ in matching):
+        names = ", ".join(n or "unnamed" for _, _, n in matching)
+        return (NO_RULE,
+                f"a {code} rule exists ({names}) but is switched off at the camera")
+    return CAPABLE, f"an enabled {code} rule is drawn on the camera"
 
 
 def assess(event_text, smd_text, motion_text):
@@ -115,6 +182,7 @@ def describe(verdict, reason, address):
     prefix = {
         CAPABLE:     "OK",
         DISABLED:    "OFF",
+        NO_RULE:     "NO RULE",
         UNSUPPORTED: "UNSUPPORTED",
         UNREACHABLE: "UNREACHABLE",
     }.get(verdict, "?")
@@ -148,6 +216,24 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
             "utf-8", errors="replace")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
         return None
+
+
+def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
+    """Ask one camera whether an IVS class will actually fire. NEVER raises."""
+    try:
+        if not address:
+            return UNREACHABLE, "no address configured"
+        if not user or not password:
+            return UNREACHABLE, "no camera credentials — set DAHUA_USER / DAHUA_PASS"
+        events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
+                       user, password, timeout)
+        if events is None:
+            return UNREACHABLE, "no answer on port 80"
+        rules = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
+                      user, password, timeout)
+        return assess_ivs(events, rules, klass)
+    except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
+        return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
 def probe(address, user, password, timeout=HTTP_TIMEOUT):

@@ -32,6 +32,23 @@
                 <Label>Hold override (seconds):</Label>
                 <Description>Leave blank to use the plugin default</Description>
             </Field>
+
+            <Field id="sepClasses" type="separator"/>
+            <Field id="classesLabel" type="label">
+                <Label>Which detections should this camera provide? People and vehicles need Smart Motion Detection, which most cameras from about 2022 onward have. Tripwire and intrusion are the older generation's equivalent and need a line or zone drawn in the camera's own web interface before they report anything.</Label>
+            </Field>
+            <Field id="want_person" type="checkbox" defaultValue="true">
+                <Label>People</Label>
+            </Field>
+            <Field id="want_vehicle" type="checkbox" defaultValue="true">
+                <Label>Vehicles</Label>
+            </Field>
+            <Field id="want_crossline" type="checkbox" defaultValue="false">
+                <Label>Tripwire (line crossed)</Label>
+            </Field>
+            <Field id="want_crossregion" type="checkbox" defaultValue="false">
+                <Label>Intrusion (zone entered)</Label>
+            </Field>
         </ConfigUI>
     </DeviceFactory>
 
@@ -47,6 +64,8 @@
                 <List>
                     <Option value="person">People</Option>
                     <Option value="vehicle">Vehicles</Option>
+                    <Option value="crossline">Tripwire (line crossed)</Option>
+                    <Option value="crossregion">Intrusion (zone entered)</Option>
                 </List>
             </Field>
             <Field id="holdOverride" type="textfield">
@@ -76,6 +95,7 @@
                         <Option value="connected">Connected</Option>
                         <Option value="reconnecting">Reconnecting</Option>
                         <Option value="unsupported">Unsupported</Option>
+                        <Option value="no rule">No rule drawn on the camera</Option>
                         <Option value="disabled">Disabled on camera</Option>
                     </List>
                 </ValueType>

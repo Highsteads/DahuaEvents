@@ -163,3 +163,97 @@ class TestSweepIsolation(unittest.TestCase):
             dp.fetch = original
         self.assertEqual(verdict, dp.UNREACHABLE)
         self.assertTrue(reason)
+
+
+# A real VideoAnalyseRule body, shortened, from Left Garage Door on 01-09-2026.
+RULES_FACE_ONLY = """
+table.VideoAnalyseRule[0][0].Class=FaceDetection
+table.VideoAnalyseRule[0][0].Enable=false
+table.VideoAnalyseRule[0][0].Name=FaceDetection
+table.VideoAnalyseRule[0][0].ObjectTypes[0]=Human
+"""
+
+RULES_WITH_TRIPWIRE = RULES_FACE_ONLY + """
+table.VideoAnalyseRule[0][1].Class=CrossLineDetection
+table.VideoAnalyseRule[0][1].Enable=true
+table.VideoAnalyseRule[0][1].Name=DriveLine
+table.VideoAnalyseRule[0][1].ObjectTypes[0]=Human
+"""
+
+RULES_TRIPWIRE_OFF = RULES_FACE_ONLY + """
+table.VideoAnalyseRule[0][1].Class=CrossLineDetection
+table.VideoAnalyseRule[0][1].Enable=false
+table.VideoAnalyseRule[0][1].Name=DriveLine
+"""
+
+IVS_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
+    ["CrossLineDetection", "CrossRegionDetection", "VideoMotion"]))
+
+# Deliberately WITHOUT any IVS code. Note CAPABLE_EVENTS at the top of this file
+# does contain CrossLineDetection, so it is the wrong fixture for this question —
+# using it asserted the opposite of what it looked like it was asserting.
+NO_IVS_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
+    ["AudioAnomaly", "MoveDetection", "SmartMotionHuman", "SmartMotionVehicle", "VideoMotion"]))
+
+
+class TestParseRules(unittest.TestCase):
+
+    def test_reads_class_enabled_and_name(self):
+        self.assertEqual(dp.parse_rules(RULES_WITH_TRIPWIRE),
+                         [("FaceDetection", False, "FaceDetection"),
+                          ("CrossLineDetection", True, "DriveLine")])
+
+    def test_empty_or_junk_gives_no_rules(self):
+        for bad in ("", None, "not a config"):
+            self.assertEqual(dp.parse_rules(bad), [])
+
+
+class TestAssessIvs(unittest.TestCase):
+
+    def test_advertised_but_no_rule_is_not_capable(self):
+        """THE IVS trap, and it is the SMD trap one generation down. The firmware
+        advertises the event, so any check based on the event list alone says yes —
+        and the camera then never fires, looking healthy for ever."""
+        verdict, reason = dp.assess_ivs(IVS_EVENTS, RULES_FACE_ONLY, "crossline")
+        self.assertEqual(verdict, dp.NO_RULE)
+        self.assertIn("no such rule", reason)
+
+    def test_a_rule_that_exists_but_is_switched_off_is_not_capable(self):
+        verdict, reason = dp.assess_ivs(IVS_EVENTS, RULES_TRIPWIRE_OFF, "crossline")
+        self.assertEqual(verdict, dp.NO_RULE)
+        self.assertIn("switched off", reason)
+        self.assertIn("DriveLine", reason, "name the rule so it can be found")
+
+    def test_an_enabled_rule_is_capable(self):
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_WITH_TRIPWIRE, "crossline")
+        self.assertEqual(verdict, dp.CAPABLE)
+
+    def test_a_rule_of_the_wrong_class_does_not_count(self):
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_WITH_TRIPWIRE, "crossregion")
+        self.assertEqual(verdict, dp.NO_RULE)
+
+    def test_firmware_without_the_event_is_unsupported_not_no_rule(self):
+        """Different problems, different fixes: one is 'draw a rule', the other is
+        'this camera never will'."""
+        verdict, _ = dp.assess_ivs(NO_IVS_EVENTS, RULES_WITH_TRIPWIRE, "crossline")
+        self.assertEqual(verdict, dp.UNSUPPORTED)
+
+    def test_unreadable_rules_are_unreachable_not_no_rule(self):
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, None, "crossline")
+        self.assertEqual(verdict, dp.UNREACHABLE)
+
+    def test_an_unknown_class_is_refused(self):
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_WITH_TRIPWIRE, "telepathy")
+        self.assertEqual(verdict, dp.UNSUPPORTED)
+
+    def test_probe_ivs_never_raises(self):
+        def hostile(*a, **k):
+            raise RuntimeError("kernel said no")
+        original, dp.fetch = dp.fetch, hostile
+        try:
+            verdict, _ = dp.probe_ivs("192.168.1.64", "u", "p", "crossline")
+        except Exception as exc:                   # noqa: BLE001 - that IS the assertion
+            self.fail(f"probe_ivs raised {exc!r}")
+        finally:
+            dp.fetch = original
+        self.assertEqual(verdict, dp.UNREACHABLE)

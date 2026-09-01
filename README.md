@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.5
+**Version:** 1.6
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -64,11 +64,26 @@ four answers, and says why:
 | capable | advertises human and vehicle detection, and it is switched on |
 | disabled | it can, but Smart Motion Detection or ordinary motion detection is off at the camera |
 | unsupported | the firmware cannot emit these events, whatever the settings say |
+| no rule | (tripwire and intrusion only) the firmware can, but no rule is drawn on the camera |
 | unreachable | no answer — wrong address, wrong credentials, or the camera is down |
 
 A camera that cannot do it still gets devices. They sit in an error state explaining why, so
 nothing disappears silently, and if you update the firmware or replace the camera they simply
 start working.
+
+## Older cameras — tripwire and intrusion
+
+Cameras from before roughly 2022 have no Smart Motion Detection and will report **unsupported**
+for people and vehicles. Most of them do offer the older IVS rules instead, and those can be
+filtered to people or vehicles, so the camera is not necessarily a lost cause.
+
+The difference is that IVS reports nothing until you tell it where to look. In the camera's own
+web interface, under Smart Plan or IVS, draw a **tripwire** (a line) or an **intrusion zone** (an
+area), set it to trigger on Human or Vehicle, and enable it. Then tick Tripwire or Intrusion when
+you add the camera here.
+
+The plugin checks whether a rule is actually drawn, not merely whether the firmware supports the
+idea. A camera with no rule says so — it does not sit there looking healthy and never firing.
 
 ## How it behaves
 
@@ -90,6 +105,15 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.6
+- **Support for older cameras via IVS rules** — tripwire (line crossed) and intrusion (zone
+  entered), both of which can be filtered to people or vehicles. These are the pre-SMD
+  generation's equivalent, so cameras that reported "unsupported" may still be useful.
+- IVS needs a line or zone drawn in the camera's own web interface first. The plugin checks for
+  one and says so plainly when it is missing or switched off, rather than sitting there looking
+  healthy and never firing.
+- The camera dialog now asks which detections you want, so you only get the devices you use.
 
 ### 1.5
 - **Actually fixes the force-kill on restart that 1.4 only half-fixed.** The worker threads

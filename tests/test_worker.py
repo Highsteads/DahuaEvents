@@ -67,18 +67,27 @@ class FakeResponse:
 
 
 class WorkerHarness:
-    """Builds a worker with the network and the capability check stubbed out."""
+    """Builds a worker with the network stubbed at the point the code really uses.
 
-    def __init__(self, verdict=dahua_probe.CAPABLE, responses=None):
+    Stubs dahua_probe.fetch rather than dahua_probe.probe, because the worker now
+    asks the event-list question directly. Stubbing the wrong function let the
+    worker reach for a fake address on the real network — which is how these tests
+    started timing out rather than failing honestly.
+    """
+
+    def __init__(self, advertises=("SmartMotionHuman", "SmartMotionVehicle"),
+                 responses=None, codes=None):
         self.events = queue.Queue()
         self.statuses = []
         self.stop = threading.Event()
         self.opens = 0
         self._responses = list(responses or [])
-        self._orig_probe = dahua_probe.probe
-        dahua_probe.probe = lambda *a, **k: (verdict, "stubbed")
+        self._orig_fetch = dahua_probe.fetch
+        events_body = "\n".join(f"events[{i}]={c}" for i, c in enumerate(advertises))
+        dahua_probe.fetch = lambda *a, **k: events_body
         self.worker = CameraWorker("10.0.0.1", "u", "p", self.events, self.stop,
-                                   status_cb=lambda a, s, d: self.statuses.append((s, d)))
+                                   status_cb=lambda a, s, d: self.statuses.append((s, d)),
+                                   codes=codes)
         self.worker._open = self._open
 
     def _open(self):
@@ -91,7 +100,7 @@ class WorkerHarness:
         return self
 
     def __exit__(self, *exc):
-        dahua_probe.probe = self._orig_probe
+        dahua_probe.fetch = self._orig_fetch
         self.stop.set()
         self.worker.stop()
         self.worker.join(timeout=3)
@@ -103,7 +112,7 @@ class TestUnsupportedCameraHalts(unittest.TestCase):
         """Termination, question 5. A camera whose firmware cannot emit these
         events will never start emitting them, so a retry loop is pure noise —
         and a loop with no exit is the specific failure the standing rules name."""
-        with WorkerHarness(verdict=dahua_probe.UNSUPPORTED) as h:
+        with WorkerHarness(advertises=("VideoMotion", "CrossLineDetection")) as h:
             h.worker.start()
             h.worker.join(timeout=3)
             self.assertFalse(h.worker.is_alive(), "an unsupported camera must halt")

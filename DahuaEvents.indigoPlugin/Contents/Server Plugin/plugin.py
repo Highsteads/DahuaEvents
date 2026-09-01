@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.5
+# Version:     1.6
 
 try:
     import indigo
@@ -59,16 +59,29 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.5"
+PLUGIN_VERSION = "1.6"
 
 DEFAULT_HOLD_SECONDS = 20
 
 # Detection classes, and the camera event code that drives each.
+# Two families. SMD (2022-ish firmware onward) classifies on its own with nothing
+# to configure. IVS is the older generation's answer and needs a tripwire or zone
+# DRAWN on the camera before it emits anything at all — so its capability check is
+# a different question, see _verdict_for().
 CLASS_CODES = {
-    "person":  "SmartMotionHuman",
-    "vehicle": "SmartMotionVehicle",
+    "person":      "SmartMotionHuman",
+    "vehicle":     "SmartMotionVehicle",
+    "crossline":   "CrossLineDetection",
+    "crossregion": "CrossRegionDetection",
 }
-CLASS_LABELS = {"person": "Person", "vehicle": "Vehicle"}
+CLASS_LABELS = {
+    "person":      "Person",
+    "vehicle":     "Vehicle",
+    "crossline":   "Tripwire",
+    "crossregion": "Intrusion",
+}
+IVS_CLASSES = ("crossline", "crossregion")
+DEFAULT_CLASSES = ("person", "vehicle")
 
 DEVICE_TYPE = "dahuaDetection"
 MODEL_NAME  = "Dahua Camera"
@@ -241,8 +254,42 @@ class Plugin(indigo.PluginBase):
         self._timers[dev.id] = HoldTimer(self._hold_for(dev))
         self._by_camera.setdefault(address, {})[klass] = dev.id
         dev.updateStateOnServer("onOffState", False)
+
+        # Per-device verdict, so one class failing does not condemn the others on
+        # the same camera. Threaded: this is device startup, not a UI callback, but
+        # it still makes HTTP calls and Indigo starts every device in turn.
+        threading.Thread(target=self._settle_device, args=(dev.id, address, klass),
+                         daemon=True, name=f"DahuaVerdict-{dev.id}").start()
         self._ensure_worker(address)
         self.logger.debug(f"deviceStartComm: {dev.name} ({address}, {klass})")
+
+    def _settle_device(self, dev_id, address, klass):
+        """Decide and show what this one device can actually do."""
+        try:
+            verdict, reason = self._verdict_for(address, klass)
+            dev = indigo.devices.get(dev_id)
+            if dev is None:
+                return
+            if verdict == dahua_probe.CAPABLE:
+                dev.updateStateOnServer("streamState", "connected")
+                dev.setErrorStateOnServer("")
+            elif verdict == dahua_probe.NO_RULE:
+                dev.updateStateOnServer("streamState", "no rule")
+                dev.setErrorStateOnServer("no rule drawn on the camera")
+                self.logger.warning(f"{dev.name}: {reason}")
+            elif verdict == dahua_probe.DISABLED:
+                dev.updateStateOnServer("streamState", "disabled")
+                dev.setErrorStateOnServer("switched off at the camera")
+                self.logger.warning(f"{dev.name}: {reason}")
+            elif verdict == dahua_probe.UNSUPPORTED:
+                dev.updateStateOnServer("streamState", "unsupported")
+                dev.setErrorStateOnServer("camera cannot emit this detection")
+                self.logger.warning(f"{dev.name}: {reason}")
+            else:
+                dev.updateStateOnServer("streamState", "reconnecting")
+                self.logger.error(f"{dev.name}: {reason}")
+        except Exception:
+            self.logger.exception(f"could not settle device {dev_id}")
 
     def deviceStopComm(self, dev):
         address = dev.pluginProps.get("address", "").strip()
@@ -285,6 +332,23 @@ class Plugin(indigo.PluginBase):
             return self.hold_seconds
         return max(0, value)
 
+    def _verdict_for(self, address, klass):
+        """Ask the right question for this class.
+
+        SMD asks 'can the firmware do it and is it switched on'. IVS asks that AND
+        'is a rule actually drawn', because an IVS camera with no rule advertises
+        the event and never fires — healthy-looking and permanently silent, which
+        is the exact failure this plugin was built to refuse.
+        """
+        if klass in IVS_CLASSES:
+            return dahua_probe.probe_ivs(address, self.cam_user, self.cam_pass, klass)
+        return dahua_probe.probe(address, self.cam_user, self.cam_pass)
+
+    def _codes_for_camera(self, address):
+        """The union of event codes the devices on this camera actually need."""
+        return {CLASS_CODES[k] for k in self._by_camera.get(address, {})
+                if k in CLASS_CODES} or set(dahua_probe.SMART_CODES)
+
     def _mark_error(self, dev, reason):
         try:
             dev.updateStateOnServer("streamState", "unsupported")
@@ -303,7 +367,8 @@ class Plugin(indigo.PluginBase):
         stop = threading.Event()
         worker = CameraWorker(address, self.cam_user, self.cam_pass,
                               self._events, stop,
-                              status_cb=lambda a, s, d: self._statuses.put((a, s, d)))
+                              status_cb=lambda a, s, d: self._statuses.put((a, s, d)),
+                              codes=self._codes_for_camera(address))
         self._stops[address]   = stop
         self._workers[address] = worker
         worker.start()
@@ -470,7 +535,10 @@ class Plugin(indigo.PluginBase):
 
         existing = {indigo.devices[d].pluginProps.get("detectionClass")
                     for d in devIdList if d in indigo.devices}
-        for klass, label in CLASS_LABELS.items():
+        wanted = [k for k in CLASS_LABELS
+                  if valuesDict.get(f"want_{k}", k in DEFAULT_CLASSES)]
+        for klass in wanted:
+            label = CLASS_LABELS[klass]
             if klass in existing:
                 continue
             try:

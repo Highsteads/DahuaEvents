@@ -25,8 +25,15 @@ import urllib.request
 import dahua_probe
 from dahua_stream import StreamParser
 
-ATTACH_PATH = ("/cgi-bin/eventManager.cgi?action=attach"
-               "&codes=[SmartMotionHuman,SmartMotionVehicle]&heartbeat=5")
+def attach_path(codes):
+    """Subscribe to exactly the codes this camera's devices need.
+
+    Built from the devices rather than hardcoded, because a camera may be doing
+    SMD, IVS, or a mixture, and asking for codes the firmware does not know is a
+    good way to get an unhelpful error from an old camera.
+    """
+    return ("/cgi-bin/eventManager.cgi?action=attach"
+            f"&codes=[{','.join(sorted(codes))}]&heartbeat=5")
 
 # Backoff: 1, 2, 4 ... capped. Uncapped doubling reaches an hour, which reads as
 # "the camera never came back" when it simply was not asked.
@@ -61,9 +68,10 @@ class CameraWorker(threading.Thread):
     """
 
     def __init__(self, address, user, password, out_queue, stop_event,
-                 status_cb=None, name=None):
+                 status_cb=None, name=None, codes=None):
         super().__init__(daemon=True, name=name or f"DahuaWorker-{address}")
         self.address    = address
+        self.codes      = set(codes) if codes else set(dahua_probe.SMART_CODES)
         self._user      = user
         self._password  = password
         self._queue     = out_queue
@@ -81,7 +89,7 @@ class CameraWorker(threading.Thread):
                 pass        # a broken callback must never kill the stream
 
     def _open(self):
-        url = f"http://{self.address}{ATTACH_PATH}"
+        url = f"http://{self.address}{attach_path(self.codes)}"
         mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
         mgr.add_password(None, url, self._user, self._password)
         opener = urllib.request.build_opener(
@@ -128,17 +136,20 @@ class CameraWorker(threading.Thread):
                 self._queue.put((self.address, event))
 
     def run(self):
-        # The capability check happens ONCE, up front. A camera whose firmware
-        # cannot emit these events will never start emitting them, so retrying is
-        # pure noise — halt and say why.
-        verdict, reason = dahua_probe.probe(self.address, self._user, self._password)
-        if verdict == dahua_probe.UNSUPPORTED:
-            self._set_status(UNSUPPORTED, reason)
+        # The capability check happens ONCE, up front, and asks only whether this
+        # camera can emit ANY of the codes we want. Whether each individual class
+        # will actually fire is a per-DEVICE question, decided in deviceStartComm
+        # and shown on that device — a camera may do SMD perfectly while having no
+        # IVS rule drawn, and halting the whole stream for that would take the
+        # working half down with the broken one.
+        advertised = dahua_probe.parse_event_list(
+            dahua_probe.fetch(self.address,
+                              "/cgi-bin/eventManager.cgi?action=getExposureEvents",
+                              self._user, self._password) or "")
+        if advertised and not (self.codes & advertised):
+            self._set_status(UNSUPPORTED,
+                             "firmware advertises none of " + ", ".join(sorted(self.codes)))
             return
-        if verdict == dahua_probe.DISABLED:
-            # Recoverable: the user can switch it on at the camera, so keep trying,
-            # but say what is wrong rather than silently reconnecting for ever.
-            self._set_status(RECONNECTING, reason)
 
         backoff = BACKOFF_START
         while not self._stop.is_set():
