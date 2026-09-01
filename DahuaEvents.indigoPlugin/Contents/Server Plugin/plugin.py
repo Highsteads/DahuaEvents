@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.8
+# Version:     1.9
 
 try:
     import indigo
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.8"
+PLUGIN_VERSION = "1.9"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -462,7 +462,8 @@ class Plugin(indigo.PluginBase):
                     continue
                 dev.updateStateOnServer("streamState", status)
                 if status == "unsupported":
-                    dev.setErrorStateOnServer(detail or "camera cannot emit smart detections")
+                    dev.setErrorStateOnServer(
+                    dahua_probe.ascii_only(detail) or "camera cannot emit smart detections")
                 elif status == "connected":
                     dev.setErrorStateOnServer("")
             if detail:
@@ -613,9 +614,17 @@ class Plugin(indigo.PluginBase):
     def closedDeviceFactoryUi(self, valuesDict, userCancelled, devIdList):
         if userCancelled:
             return
-        address = valuesDict.get("address", "").strip()
-        name    = valuesDict.get("cameraName", "").strip()
-        hold    = str(valuesDict.get("holdOverride", "")).strip()
+        address = dahua_probe.ascii_only(valuesDict.get("address", "")).strip()
+        name    = dahua_probe.ascii_only(valuesDict.get("cameraName", "")).strip()
+        hold    = dahua_probe.ascii_only(valuesDict.get("holdOverride", "")).strip()
+
+        # The capability summary is a DISPLAY field. It must not travel any further:
+        # Indigo persists the factory's dialog values, and a runtime string reaching
+        # its XML layer is how device creation failed with
+        # "illegal character in XML tag name or value", naming neither field nor
+        # character. Clearing it also means the next dialog starts blank rather than
+        # showing a verdict for the previous camera.
+        valuesDict["capabilitySummary"] = ""
 
         existing = {indigo.devices[d].pluginProps.get("detectionClass")
                     for d in devIdList if d in indigo.devices}

@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.8
+**Version:** 1.9
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,13 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.9
+- **Fixes device creation failing in the camera dialog** with "illegal character in XML tag name
+  or value". The capability summary added in 1.8 used a non-ASCII separator, and Indigo refuses
+  runtime text containing one — naming neither the field nor the character. Everything the plugin
+  writes at runtime is now plain ASCII, and the summary is a display field that no longer travels
+  into device creation at all.
 
 ### 1.8
 - **The camera dialog now has a Check This Camera button.** It asks the camera what it can do and

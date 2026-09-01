@@ -322,14 +322,29 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         return {k: (UNREACHABLE, f"unexpected error: {exc!r}") for k in classes}
 
 
+def ascii_only(text):
+    """Strip anything outside plain ASCII.
+
+    Indigo serialises device names, props and states through XML, and a non-ASCII
+    character in a value written at RUNTIME can be rejected with
+    `LowLevelBadParameterError -- illegal character in XML tag name or value`,
+    which names neither the field nor the character. Static UTF-8 in the XML files
+    is fine — this is about what we put in at runtime. The house rule already said
+    ASCII only; a middle dot in a summary line broke it (01-09-2026).
+    """
+    if text is None:
+        return ""
+    return "".join(c if 32 <= ord(c) < 127 else "?" for c in str(text))
+
+
 def summarise(caps):
     """One short line per class, for a dialog field. Ordered, so it reads the same
-    every time and a changed answer is noticeable."""
+    every time and a changed answer is noticeable. ASCII ONLY — see ascii_only()."""
     labels = {"person": "People", "vehicle": "Vehicles",
               "crossline": "Tripwire", "crossregion": "Intrusion"}
     marks  = {CAPABLE: "yes", DISABLED: "off at the camera",
               NO_RULE: "no rule drawn", UNSUPPORTED: "not supported",
               UNREACHABLE: "could not tell"}
-    return " · ".join(f"{labels[k]}: {marks.get(caps[k][0], '?')}"
-                      for k in ("person", "vehicle", "crossline", "crossregion")
-                      if k in caps)
+    return ascii_only(" | ".join(f"{labels[k]}: {marks.get(caps[k][0], '?')}"
+                                 for k in ("person", "vehicle", "crossline", "crossregion")
+                                 if k in caps))

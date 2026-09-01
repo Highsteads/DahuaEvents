@@ -349,3 +349,45 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(line.index("People") < line.index("Vehicles")
                          < line.index("Tripwire") < line.index("Intrusion"), True)
         self.assertIn("no rule drawn", line)
+
+
+class TestAsciiOnly(unittest.TestCase):
+    """Indigo serialises names, props and states through XML, and a non-ASCII
+    character in a value written at RUNTIME can be refused with
+    `LowLevelBadParameterError -- illegal character in XML tag name or value`,
+    naming neither the field nor the character. Device creation failed exactly
+    that way on 01-09-2026 because a summary line joined with a middle dot.
+    """
+
+    def test_it_strips_the_characters_that_caused_it(self):
+        self.assertEqual(dp.ascii_only("a · b — c"), "a ? b ? c")
+
+    def test_plain_text_is_untouched(self):
+        self.assertEqual(dp.ascii_only("People: yes | Vehicles: no"),
+                         "People: yes | Vehicles: no")
+
+    def test_none_and_non_strings_are_safe(self):
+        self.assertEqual(dp.ascii_only(None), "")
+        self.assertEqual(dp.ascii_only(42), "42")
+
+    def test_control_characters_go_too(self):
+        self.assertEqual(dp.ascii_only("a\x00b\tc\nd"), "a?b?c?d")
+
+    def test_summarise_output_is_always_ascii(self):
+        """The actual regression. summarise() feeds a dialog field, so whatever it
+        returns must survive Indigo's XML layer."""
+        original, dp.fetch = dp.fetch, (lambda *a, **k: None)
+        try:
+            line = dp.summarise(dp.capabilities("192.168.1.64", "u", "p"))
+        finally:
+            dp.fetch = original
+        self.assertTrue(line)
+        offenders = [c for c in line if ord(c) > 126]
+        self.assertEqual(offenders, [], f"non-ASCII in a dialog value: {offenders}")
+
+    def test_every_summarise_verdict_stays_ascii(self):
+        for verdict in (dp.CAPABLE, dp.DISABLED, dp.NO_RULE, dp.UNSUPPORTED, dp.UNREACHABLE):
+            caps = {k: (verdict, "why") for k in
+                    ("person", "vehicle", "crossline", "crossregion")}
+            line = dp.summarise(caps)
+            self.assertEqual([c for c in line if ord(c) > 126], [], line)
