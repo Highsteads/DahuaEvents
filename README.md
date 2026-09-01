@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.0
+**Version:** 1.1
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -55,7 +55,17 @@ model and the detection hold follow — see `SPEC.md` for the full plan.
 
 ## Changelog
 
-### 1.0 (in progress)
+### 1.1
+- Live detections. A worker thread per camera holds the event stream open; the plugin's main
+  thread is the only thing that writes a device state, so no locks are needed anywhere.
+- **Dahua Camera...** device factory — one dialog per camera creates its Person and Vehicle
+  sensors together, so the pair can never be half-configured or inconsistently named.
+- Detection hold, configurable globally and per camera, so one person walking past fires a
+  trigger once rather than a dozen times.
+- **Test All Cameras** now runs in the background. Indigo's UI callbacks time out after about
+  30 seconds and a sweep of several cameras can exceed that, leaving the dialog broken.
+
+### 1.0
 - Capability probing that trusts the camera's advertised event list rather than its
   configuration flags, because a camera will happily report smart detection as enabled while
   being incapable of emitting it.

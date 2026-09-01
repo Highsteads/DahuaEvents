@@ -9,7 +9,33 @@
      overriden (ignoring)" once per device at every startup. -->
 <Devices>
 
-    <Device type="sensor" id="dahuaDetection">
+    <!-- One dialog per CAMERA creates the Person and Vehicle pair, so the two can
+         never be half-configured or inconsistently named. Note that once a
+         DeviceFactory exists the sub-devices are no longer individually creatable
+         from Indigo's New Device dialog — that is by design here. -->
+    <DeviceFactory>
+        <Name>Dahua Camera...</Name>
+        <ButtonTitle>Close</ButtonTitle>
+        <ConfigUI>
+            <Field id="factoryLabel" type="label">
+                <Label>Adds a camera and creates two sensors for it — one for people, one for vehicles. The camera does the recognition itself; nothing is analysed on this machine.</Label>
+            </Field>
+            <Field id="cameraName" type="textfield">
+                <Label>Camera name:</Label>
+                <Description>Devices become "&lt;name&gt; Person" and "&lt;name&gt; Vehicle"</Description>
+            </Field>
+            <Field id="address" type="textfield">
+                <Label>Camera address:</Label>
+                <Description>IP address or hostname, e.g. 192.168.1.64</Description>
+            </Field>
+            <Field id="holdOverride" type="textfield">
+                <Label>Hold override (seconds):</Label>
+                <Description>Leave blank to use the plugin default</Description>
+            </Field>
+        </ConfigUI>
+    </DeviceFactory>
+
+    <Device type="sensor" id="dahuaDetection" subType="Detection">
         <Name>Dahua Detection Sensor</Name>
         <ConfigUI>
             <Field id="address" type="textfield">
@@ -38,6 +64,11 @@
                 <ValueType>Integer</ValueType>
                 <TriggerLabel>Detections today</TriggerLabel>
                 <ControlPageLabel>Detections today</ControlPageLabel>
+            </State>
+            <State id="lastDetectionDay">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Last detection day</TriggerLabel>
+                <ControlPageLabel>Last detection day</ControlPageLabel>
             </State>
             <State id="streamState">
                 <ValueType>

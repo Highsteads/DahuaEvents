@@ -33,7 +33,11 @@ done
 
 echo
 echo "== lint (errors only) =="
-python3 -m ruff check . && echo "  ok"
+# NOT `ruff check . && echo ok` — `set -e` does not fire on the left-hand side
+# of `&&`, so that form lets a lint failure through and the script still exits 0.
+# Inherited from an earlier repo, where it had been silently passing.
+python3 -m ruff check .
+echo "  ok"
 
 echo
 # Never ship __pycache__ inside the bundle.
