@@ -19,7 +19,9 @@ echo
 echo "== python syntax =="
 # -B alone does NOT stop py_compile writing bytecode — it only suppresses the
 # implicit write on import. The sweep at the end is the part that works.
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m py_compile "$BUNDLE/plugin.py" "$BUNDLE/dahua_probe.py"
+PYTHONDONTWRITEBYTECODE=1 # Glob rather than a list: a hand-maintained list silently stops covering the
+# newest file, which is exactly what happened when dahua_stream.py was added.
+python3 -B -m py_compile "$BUNDLE"/*.py
 echo "  ok"
 
 echo
