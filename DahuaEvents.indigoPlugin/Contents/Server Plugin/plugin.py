@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-09-2026
-# Version:     1.6
+# Version:     1.7
 
 try:
     import indigo
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.6"
+PLUGIN_VERSION = "1.7"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -156,6 +156,7 @@ class Plugin(indigo.PluginBase):
         self._stops    = {}                  # address -> threading.Event
         self._timers   = {}                  # device id -> HoldTimer
         self._by_camera = {}                 # address -> {class -> device id}
+        self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
 
@@ -390,6 +391,38 @@ class Plugin(indigo.PluginBase):
             worker.join(timeout=SHUTDOWN_BUDGET)
 
     # --------------------------------------------------------
+    # Sensor actions
+    # --------------------------------------------------------
+
+    def actionControlSensor(self, action, dev):
+        """Declaring type="sensor" obliges this method.
+
+        Without it Indigo logs `plugin does not define method actionControlSensor`
+        and silently drops the action — so a script calling indigo.device.turnOn()
+        on one of these, or a user pressing the button in the UI, gets nothing and
+        no explanation. These devices are read-only: what they report is what the
+        camera saw, and pretending otherwise would put a state on screen that no
+        camera ever produced.
+        """
+        if action.sensorAction == indigo.kSensorAction.RequestStatus:
+            address = dev.pluginProps.get("address", "").strip()
+            klass = dev.pluginProps.get("detectionClass", "person")
+            self.logger.info(f"{dev.name}: re-checking the camera...")
+            threading.Thread(target=self._settle_device, args=(dev.id, address, klass),
+                             daemon=True, name=f"DahuaVerdict-{dev.id}").start()
+        elif action.sensorAction in (indigo.kSensorAction.TurnOn,
+                                     indigo.kSensorAction.TurnOff,
+                                     indigo.kSensorAction.Toggle):
+            self.logger.warning(
+                f"{dev.name} is read-only — it reports what the camera sees and "
+                f"cannot be switched by hand.")
+        else:
+            # An unhandled action that logs nothing is indistinguishable from one
+            # that was never dispatched, and the two have very different causes.
+            self.logger.warning(f"{dev.name}: unhandled sensor action "
+                                f"{action.sensorAction!r} — ignored")
+
+    # --------------------------------------------------------
     # The drain — the ONLY place a device state is written
     # --------------------------------------------------------
 
@@ -413,6 +446,7 @@ class Plugin(indigo.PluginBase):
             self._drain_statuses()
             self._drain_events()
             self._expire_holds()
+            self._roll_day_if_needed()
         except self.StopThread:
             raise                      # never swallow the stop
         except Exception:
@@ -487,6 +521,25 @@ class Plugin(indigo.PluginBase):
                 dev = indigo.devices.get(dev_id)
                 if dev is not None:
                     self._write_on_off(dev, timer.is_on)
+
+    def _roll_day_if_needed(self):
+        """Zero the daily counters when the date changes.
+
+        Resetting only inside _bump_count meant the count reset on the next
+        DETECTION rather than at midnight — so a device that saw twelve yesterday
+        read twelve all morning until something walked past. A number that reports
+        a different day from the one it claims is worse than no number.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today == self._counter_day:
+            return
+        self._counter_day = today
+        for dev_id in list(self._timers):
+            dev = indigo.devices.get(dev_id)
+            if dev is None:
+                continue
+            if dev.states.get("lastDetectionDay", "") != today:
+                dev.updateStateOnServer("detectionsToday", 0)
 
     def _write_on_off(self, dev, on):
         dev.updateStateOnServer("onOffState", on)

@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.6
+**Version:** 1.7
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -105,6 +105,14 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.7
+- Sensor actions are handled. Sending on, off or a status request to one of these devices used
+  to be dropped by Indigo with an error and no explanation, because the plugin never implemented
+  the callback that declaring a sensor device obliges. A status request now re-checks the camera;
+  on and off say plainly that the device is read-only.
+- **Detections today** now resets at midnight rather than on the next detection, so a camera
+  that saw twelve yesterday no longer reads twelve all morning.
 
 ### 1.6
 - **Support for older cameras via IVS rules** — tripwire (line crossed) and intrusion (zone
