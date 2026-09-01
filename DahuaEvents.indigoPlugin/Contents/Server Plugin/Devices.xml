@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Stage 1 declares the device type so the shape is settled and the XML tests have
+     something to check. The device factory that creates the person/vehicle pair, and
+     the event stream that drives them, arrive in stages 3 and 2 respectively.
+
+     NOTE: onOffState is NOT declared here. It is a NATIVE state on a sensor device,
+     inherited when SupportsOnState is set True at creation. Declaring a native state
+     makes the Indigo client log "illegal state key ... native state keys cannot be
+     overriden (ignoring)" once per device at every startup. -->
+<Devices>
+
+    <Device type="sensor" id="dahuaDetection">
+        <Name>Dahua Detection Sensor</Name>
+        <ConfigUI>
+            <Field id="address" type="textfield">
+                <Label>Camera address:</Label>
+                <Description>IP address or hostname, e.g. 192.168.1.64</Description>
+            </Field>
+            <Field id="detectionClass" type="menu" defaultValue="person">
+                <Label>Detects:</Label>
+                <List>
+                    <Option value="person">People</Option>
+                    <Option value="vehicle">Vehicles</Option>
+                </List>
+            </Field>
+            <Field id="holdOverride" type="textfield">
+                <Label>Hold override (seconds):</Label>
+                <Description>Leave blank to use the plugin default</Description>
+            </Field>
+        </ConfigUI>
+        <States>
+            <State id="lastDetection">
+                <ValueType>String</ValueType>
+                <TriggerLabel>Last detection</TriggerLabel>
+                <ControlPageLabel>Last detection</ControlPageLabel>
+            </State>
+            <State id="detectionsToday">
+                <ValueType>Integer</ValueType>
+                <TriggerLabel>Detections today</TriggerLabel>
+                <ControlPageLabel>Detections today</ControlPageLabel>
+            </State>
+            <State id="streamState">
+                <ValueType>
+                    <List>
+                        <Option value="connected">Connected</Option>
+                        <Option value="reconnecting">Reconnecting</Option>
+                        <Option value="unsupported">Unsupported</Option>
+                        <Option value="disabled">Disabled on camera</Option>
+                    </List>
+                </ValueType>
+                <TriggerLabel>Stream state</TriggerLabel>
+                <ControlPageLabel>Stream state</ControlPageLabel>
+            </State>
+        </States>
+    </Device>
+
+</Devices>

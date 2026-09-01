@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MenuItems>
+
+    <MenuItem id="probeCamera">
+        <Name>Probe a Camera...</Name>
+        <CallbackMethod>probeCamera</CallbackMethod>
+        <ConfigUI>
+            <Field id="introLabel" type="label">
+                <Label>Ask one camera whether it can emit human and vehicle detections. Works without adding a device, so it is the quickest way to check a camera after a swap or a firmware update.</Label>
+            </Field>
+            <Field id="address" type="textfield">
+                <Label>Camera address:</Label>
+                <Description>IP address or hostname, e.g. 192.168.1.64</Description>
+            </Field>
+        </ConfigUI>
+    </MenuItem>
+
+    <MenuItem id="testConnection">
+        <Name>Test All Cameras</Name>
+        <CallbackMethod>testConnection</CallbackMethod>
+    </MenuItem>
+
+    <MenuItem id="sep_info" isSeparator="true"/>
+
+    <MenuItem id="showPluginInfo">
+        <Name>Show Plugin Info</Name>
+        <CallbackMethod>showPluginInfo</CallbackMethod>
+    </MenuItem>
+
+</MenuItems>

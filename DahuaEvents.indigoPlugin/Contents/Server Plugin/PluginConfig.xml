@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PluginConfig>
+
+    <Field id="credsLabel" type="label">
+        <Label>Camera credentials are read from IndigoSecrets.py first (DAHUA_USER and DAHUA_PASS). The fields below are a fallback for installations without that file — anything set there wins over what you type here.</Label>
+    </Field>
+
+    <Field id="dahuaUser" type="textfield">
+        <Label>Camera username:</Label>
+        <Description>A user with access to the camera's event and config API</Description>
+    </Field>
+
+    <Field id="dahuaPass" type="textfield" secure="true">
+        <Label>Camera password:</Label>
+        <Description>Masked in this dialog only — Indigo does not store it securely</Description>
+    </Field>
+
+    <Field id="sep1" type="separator"/>
+
+    <Field id="holdLabel" type="label">
+        <Label>Cameras send rapid start/stop pairs as someone moves through frame. The hold keeps a detection switched on for this long after the last event, so one person walking past fires a trigger once rather than a dozen times.</Label>
+    </Field>
+
+    <Field id="holdSeconds" type="textfield" defaultValue="20">
+        <Label>Detection hold (seconds):</Label>
+        <Description>Default for all cameras; can be overridden per camera</Description>
+    </Field>
+
+</PluginConfig>

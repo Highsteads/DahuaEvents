@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>DahuaEvents</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.clives.indigoplugin.dahuaevents</string>
+    <key>CFBundleName</key>
+    <string>DahuaEvents</string>
+    <!-- CFBundleVersion is the bundle LAYOUT, not the plugin release. Jay confirmed
+         (25-05-2026) it is controlled by the Indigo team — leave it at 1.0.0. -->
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <!-- Required: becomes the "About DahuaEvents" menu item. -->
+    <key>CFBundleURLTypes</key>
+    <string>https://github.com/Highsteads/DahuaEvents</string>
+    <!-- The version Indigo actually displays. Digits and dots only. -->
+    <key>PluginVersion</key>
+    <string>1.0</string>
+    <key>ServerApiVersion</key>
+    <string>3.0</string>
+</dict>
+</plist>

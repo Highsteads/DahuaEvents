@@ -1,0 +1,15 @@
+CLAUDE.md
+IndigoSecrets.py
+**/IndigoSecrets.py
+secrets.py
+**/secrets.py
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Contents/Packages/
+**/Contents/Packages/
+.pytest_cache/
+
+# Local working documents — SPEC carries the real camera inventory
+SPEC.md

@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"   # matches Indigo 2025.2's embedded Python
+      - name: Install test tools
+        run: pip install pytest ruff
+      # tests/run.sh IS the gate — pytest, py_compile, XML well-formedness and
+      # ruff, in one place. CI runs the same script rather than restating its
+      # steps in YAML: two copies of a gate drift, and the half that drifts is
+      # always the one nobody watches.
+      - name: Contract tests (tests/run.sh)
+        run: ./tests/run.sh
