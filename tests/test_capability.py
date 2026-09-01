@@ -141,3 +141,25 @@ class TestProbeGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSweepIsolation(unittest.TestCase):
+    """Architecture question 2, asserted rather than asserted-in-prose.
+
+    A sweep of seven cameras must lose only the camera that fails. The plugin
+    itself needs an indigo import, so this exercises the contract at the level
+    the plugin relies on: probe() must never raise, whatever fetch does.
+    """
+
+    def test_probe_never_raises_however_the_network_misbehaves(self):
+        def hostile(*a, **k):
+            raise RuntimeError("kernel said no")
+        original, dp.fetch = dp.fetch, hostile
+        try:
+            verdict, reason = dp.probe("192.168.1.64", "u", "p")
+        except Exception as exc:                       # noqa: BLE001 - that IS the assertion
+            self.fail(f"probe() raised {exc!r}; one bad camera would kill the whole sweep")
+        finally:
+            dp.fetch = original
+        self.assertEqual(verdict, dp.UNREACHABLE)
+        self.assertTrue(reason)

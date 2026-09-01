@@ -170,19 +170,29 @@ class Plugin(indigo.PluginBase):
         ]
 
     def _probe_and_log(self, address):
-        """Probe one camera and log the verdict. Returns the verdict string."""
-        verdict, reason = dahua_probe.probe(address, self.cam_user, self.cam_pass)
-        line = dahua_probe.describe(verdict, reason, address)
-        fw = dahua_probe.firmware(address, self.cam_user, self.cam_pass)
-        if fw:
-            line += f"  (firmware {fw})"
-        if verdict == dahua_probe.CAPABLE:
-            self.logger.info(line)
-        elif verdict == dahua_probe.UNREACHABLE:
-            self.logger.error(line)
-        else:
-            self.logger.warning(line)
-        return verdict
+        """Probe one camera and log the verdict. Returns the verdict string.
+
+        Wraps the WHOLE body, not a fraction of it: in a sweep of seven cameras one
+        unexpected throw must cost that camera and nothing else. probe() already
+        swallows network errors, so anything reaching here is a genuine surprise and
+        is worth a stack trace — but it still must not take the other six with it.
+        """
+        try:
+            verdict, reason = dahua_probe.probe(address, self.cam_user, self.cam_pass)
+            line = dahua_probe.describe(verdict, reason, address)
+            fw = dahua_probe.firmware(address, self.cam_user, self.cam_pass)
+            if fw:
+                line += f"  (firmware {fw})"
+            if verdict == dahua_probe.CAPABLE:
+                self.logger.info(line)
+            elif verdict == dahua_probe.UNREACHABLE:
+                self.logger.error(line)
+            else:
+                self.logger.warning(line)
+            return verdict
+        except Exception:
+            self.logger.exception(f"probing {address} failed unexpectedly")
+            return dahua_probe.UNREACHABLE
 
     # --------------------------------------------------------
     # Menu handlers
@@ -205,7 +215,11 @@ class Plugin(indigo.PluginBase):
         if log_startup_banner:
             log_startup_banner(self.pluginId, self.pluginDisplayName, self.pluginVersion,
                                extras=self._banner_extras())
-        address = (valuesDict or {}).get("address", "").strip()
+        try:
+            address = (valuesDict or {}).get("address", "").strip()
+        except Exception:
+            self.logger.exception("could not read the address from the dialog")
+            return False
         if not address:
             self.logger.error("No camera address given.")
             return False
@@ -218,11 +232,15 @@ class Plugin(indigo.PluginBase):
             log_startup_banner(self.pluginId, self.pluginDisplayName, self.pluginVersion,
                                extras=self._banner_extras())
 
-        addresses = sorted({
-            dev.pluginProps.get("address", "").strip()
-            for dev in indigo.devices.iter("self")
-            if dev.pluginProps.get("address", "").strip()
-        })
+        try:
+            addresses = sorted({
+                dev.pluginProps.get("address", "").strip()
+                for dev in indigo.devices.iter("self")
+                if dev.pluginProps.get("address", "").strip()
+            })
+        except Exception:
+            self.logger.exception("could not read the camera list from the devices")
+            return False
 
         if not addresses:
             # Say what was NOT checked. A sweep that covered nothing must never read

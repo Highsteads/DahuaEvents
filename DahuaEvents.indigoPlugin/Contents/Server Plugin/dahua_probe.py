@@ -151,7 +151,21 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
 
 
 def probe(address, user, password, timeout=HTTP_TIMEOUT):
-    """Ask one camera what it can do. Returns (verdict, reason)."""
+    """Ask one camera what it can do. Returns (verdict, reason). NEVER raises.
+
+    fetch() deliberately catches only the expected network errors, so a genuine bug
+    in this module still surfaces rather than hiding behind a blanket except. But
+    this function is the public entry point and callers sweep seven cameras with it,
+    so the whole body is guarded: one camera must cost one camera. The surprise is
+    reported in the reason rather than swallowed.
+    """
+    try:
+        return _probe(address, user, password, timeout)
+    except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
+        return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
+
+
+def _probe(address, user, password, timeout=HTTP_TIMEOUT):
     if not address:
         return UNREACHABLE, "no address configured"
     if not user or not password:
