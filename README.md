@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.9
+**Version:** 1.10
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,17 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.10
+- **A quiet camera no longer looks dead.** Each camera's own status was only ever reported once
+  — the moment its stream connected — so a camera that went hours with nothing to say (no
+  detection, no fault) never told Indigo it was still there. Nothing watching comm freshness
+  could tell that apart from a genuinely broken connection, and on a quiet night it cost three
+  unnecessary restarts and a page saying the plugin needed attention, for cameras that were
+  answering within a tenth of a second the whole time. The status is now repeated every five
+  minutes while the stream stays open and healthy, whether or not anything has happened. A
+  camera that really has gone quiet — a dropped heartbeat, a closed stream — is still caught
+  just as fast as before; this only stops a healthy silence being mistaken for one.
 
 ### 1.9
 - **Fixes device creation failing in the camera dialog** with "illegal character in XML tag name

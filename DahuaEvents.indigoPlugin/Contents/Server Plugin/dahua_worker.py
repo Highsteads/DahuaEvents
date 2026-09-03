@@ -12,9 +12,22 @@
 #              stop is immediate rather than up to a minute late. A camera that fails
 #              the capability check halts rather than retrying for ever — quiet, back
 #              off, then stop.
-# Author:      CliveS & Claude Opus 5
-# Date:        01-09-2026
-# Version:     1.0
+# Author:      CliveS & Claude Sonnet 5
+# Date:        03-09-2026
+# Version:     1.1
+#
+# v1.1 (03-09-2026): CONNECTED is now re-affirmed periodically while a stream
+# stays open, healthy and silent — not just once, at open. status_cb used to
+# fire CONNECTED a single time and never again until the status genuinely
+# changed, so a camera with nothing to report (no detection, no reconnect) never
+# triggered another device-state write — and plugin.py's _drain_statuses is the
+# ONLY place a state gets written, so Indigo's lastSuccessfulComm froze at
+# stream-open time. DeviceHealthMonitor's watchdog reads exactly that clock, and
+# on a quiet night (nobody walking past four cameras for 70+ minutes) it
+# restarted this plugin three times and paged CliveS at 04:39 for cameras that
+# answered in under 100ms when checked by hand — see TRIAGE_QUEUE.md,
+# 03-Sep-2026, Perceptive Automation project root. Fixed at the source rather
+# than relying on the watchdog knowing to be lenient with this plugin.
 
 import select
 import threading
@@ -44,6 +57,16 @@ BACKOFF_MAX   = 60
 # dead even though the socket is still nominally open — the classic half-open TCP
 # case that a plain blocking read never notices.
 READ_TIMEOUT  = 20
+
+# How often CONNECTED is re-affirmed to status_cb while the stream is open,
+# healthy and has nothing new to say. Without this, a quiet camera writes a
+# device state exactly ONCE — at stream-open — and lastSuccessfulComm freezes
+# from that moment, indistinguishable from a dead worker to anything watching
+# comm age (DeviceHealthMonitor's plugin watchdog, in particular). Comfortably
+# under any sane wedge threshold and cheap: one extra queued status per camera
+# every five minutes, no HTTP traffic, no log line (status_cb's detail stays
+# empty, and plugin.py only logs when detail is truthy).
+STATUS_REAFFIRM = 300
 
 # How long we ever sit inside select() before looking at the stop flag again. This
 # is the single number that decides how fast the plugin can quit, because a thread
@@ -110,11 +133,21 @@ class CameraWorker(threading.Thread):
         Silence is normal and is NOT an error: the camera sends a heartbeat every
         five seconds, so most ticks legitimately have nothing to read. Only a run of
         silence longer than several heartbeats means the connection is really dead.
+
+        A healthy stream that never has an EVENT to report (no detection, no
+        status change) would otherwise never call status_cb again after the
+        opening CONNECTED — see STATUS_REAFFIRM. That re-affirm is checked here,
+        not folded into the heartbeat check above, because they answer different
+        questions: last_data is "is the socket still alive", last_reaffirm is
+        "have we told the plugin lately" — collapsing them would mean a
+        reconnect resets the very clock that is supposed to catch a stream that
+        stays open but stops being useful.
         """
         parser = StreamParser()
         self._response = self._open()
         self._set_status(CONNECTED)
         last_data = time.monotonic()
+        last_reaffirm = last_data
 
         while not self._stop.is_set():
             try:
@@ -123,8 +156,12 @@ class CameraWorker(threading.Thread):
                 # The response was closed under us — that is a stop, not a fault.
                 return
             if not readable:
-                if time.monotonic() - last_data > READ_TIMEOUT:
+                now = time.monotonic()
+                if now - last_data > READ_TIMEOUT:
                     raise OSError("no heartbeat from the camera")
+                if now - last_reaffirm >= STATUS_REAFFIRM:
+                    self._set_status(CONNECTED)
+                    last_reaffirm = now
                 continue
 
             chunk = self._response.read1(CHUNK)

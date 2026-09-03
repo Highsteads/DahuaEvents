@@ -139,6 +139,69 @@ class TestEventsReachTheQueue(unittest.TestCase):
             self.assertEqual(h.statuses[0][0], dahua_worker.CONNECTED)
 
 
+class TestConnectedIsReaffirmedWhileIdle(unittest.TestCase):
+    """The 03-Sep-2026 false-wedge bug, asserted so it cannot come back.
+
+    A stream that stays open, healthy and has nothing new to report (no
+    detection, no status change) used to call status_cb exactly ONCE — at
+    stream-open — and never again. Downstream that is the only place a device
+    state gets written, so Indigo's lastSuccessfulComm froze at that moment and
+    DeviceHealthMonitor's watchdog read a perfectly healthy quiet camera as
+    wedged, restarting this plugin three times overnight. CONNECTED must now be
+    re-affirmed on a cadence even when nothing else happens.
+    """
+
+    def test_connected_is_re_affirmed_on_a_cadence_while_idle(self):
+        original_tick = dahua_worker.SELECT_TICK
+        original_reaffirm = dahua_worker.STATUS_REAFFIRM
+        # Both patched as bare module globals, which is what _pump actually reads
+        # at call time — see the backoff test above for the same trick.
+        dahua_worker.SELECT_TICK = 0.02
+        dahua_worker.STATUS_REAFFIRM = 0.05
+        try:
+            # No chunks and then=None: FakeResponse never becomes readable, so
+            # every tick takes the "not readable" branch this fix lives in, for
+            # as long as the test lets it run.
+            with WorkerHarness(responses=[FakeResponse([], then=None)]) as h:
+                h.worker.start()
+                deadline = time.time() + 2
+                connected_count = 0
+                while time.time() < deadline:
+                    connected_count = sum(1 for s, _ in h.statuses if s == dahua_worker.CONNECTED)
+                    if connected_count >= 3:
+                        break
+                    time.sleep(0.01)
+                self.assertGreaterEqual(
+                    connected_count, 3,
+                    f"expected repeated CONNECTED re-affirms while idle, got {h.statuses}")
+        finally:
+            dahua_worker.SELECT_TICK = original_tick
+            dahua_worker.STATUS_REAFFIRM = original_reaffirm
+
+    def test_a_genuine_reconnect_is_not_swallowed_by_the_reaffirm_timer(self):
+        """The reaffirm must not paper over a real, dead connection — READ_TIMEOUT
+        still fires and still wins even with a short reaffirm cadence."""
+        original_tick = dahua_worker.SELECT_TICK
+        original_reaffirm = dahua_worker.STATUS_REAFFIRM
+        original_timeout = dahua_worker.READ_TIMEOUT
+        dahua_worker.SELECT_TICK = 0.02
+        dahua_worker.STATUS_REAFFIRM = 0.05
+        dahua_worker.READ_TIMEOUT = 0.2
+        try:
+            with WorkerHarness(responses=[
+                    FakeResponse([], then=None), FakeResponse([], then="raise")]) as h:
+                h.worker.start()
+                deadline = time.time() + 3
+                while time.time() < deadline and h.opens < 2:
+                    time.sleep(0.01)
+                self.assertGreaterEqual(h.opens, 2,
+                    "a genuinely dead stream must still reconnect, not sit re-affirmed forever")
+        finally:
+            dahua_worker.SELECT_TICK = original_tick
+            dahua_worker.STATUS_REAFFIRM = original_reaffirm
+            dahua_worker.READ_TIMEOUT = original_timeout
+
+
 class TestReconnection(unittest.TestCase):
 
     def test_a_dropped_stream_is_retried(self):

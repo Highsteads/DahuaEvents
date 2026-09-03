@@ -13,9 +13,9 @@
 #              object and it is already thread-safe.
 #
 #              Stage 4 remains: rollout across all cameras, README, release.
-# Author:      CliveS & Claude Opus 5
-# Date:        01-09-2026
-# Version:     1.9
+# Author:      CliveS & Claude Sonnet 5
+# Date:        03-09-2026
+# Version:     1.10
 
 try:
     import indigo
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.9"
+PLUGIN_VERSION = "1.10"
 
 DEFAULT_HOLD_SECONDS = 20
 
