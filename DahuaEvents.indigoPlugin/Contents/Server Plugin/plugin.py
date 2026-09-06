@@ -14,8 +14,8 @@
 #
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Sonnet 5
-# Date:        03-09-2026
-# Version:     1.11
+# Date:        06-09-2026
+# Version:     1.12
 try:
     import indigo
 except ImportError:
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.10"
+PLUGIN_VERSION = "1.12"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -305,7 +305,7 @@ class Plugin(indigo.PluginBase):
                 dev.updateStateOnServer("streamState", "connected")
                 dev.setErrorStateOnServer("")
             elif verdict == dahua_probe.NO_RULE:
-                dev.updateStateOnServer("streamState", "no rule")
+                dev.updateStateOnServer("streamState", "noRule")
                 dev.setErrorStateOnServer("no rule drawn on the camera")
                 self.logger.warning(f"{dev.name}: {reason}")
             elif verdict == dahua_probe.DISABLED:

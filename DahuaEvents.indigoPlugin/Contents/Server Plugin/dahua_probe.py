@@ -322,19 +322,26 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         return {k: (UNREACHABLE, f"unexpected error: {exc!r}") for k in classes}
 
 
+_XML_RESERVED = "&<>\"'"
+
+
 def ascii_only(text):
-    """Strip anything outside plain ASCII.
+    """Strip anything outside plain ASCII, and Indigo's five reserved XML characters.
 
     Indigo serialises device names, props and states through XML, and a non-ASCII
-    character in a value written at RUNTIME can be rejected with
+    OR XML-reserved character in a value written at RUNTIME can be rejected with
     `LowLevelBadParameterError -- illegal character in XML tag name or value`,
     which names neither the field nor the character. Static UTF-8 in the XML files
     is fine — this is about what we put in at runtime. The house rule already said
-    ASCII only; a middle dot in a summary line broke it (01-09-2026).
+    ASCII only; a middle dot in a summary line broke it (01-09-2026). An ampersand
+    or a stray quote typed into the Camera Name or Hold field breaks device
+    creation the same way — printable ASCII, but still illegal in this position —
+    found 02-09-2026 onboarding "Patio" and left unfixed until now (TRIAGE_QUEUE).
     """
     if text is None:
         return ""
-    return "".join(c if 32 <= ord(c) < 127 else "?" for c in str(text))
+    return "".join(c if 32 <= ord(c) < 127 and c not in _XML_RESERVED else "?"
+                  for c in str(text))
 
 
 def summarise(caps):

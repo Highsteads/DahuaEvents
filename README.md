@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.11
+**Version:** 1.12
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,17 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.12
+- **Two bugs found onboarding a camera, both now fixed.** A camera name or hold value
+  containing an ampersand or a quote made device creation fail with "illegal character in
+  XML tag name or value" — 1.9 had already stripped non-ASCII text but let those five
+  printable characters straight through, so they hit the same wall. And a Tripwire or
+  Intrusion camera with no rule drawn reported it with the value `no rule`, which Indigo
+  quietly refused outright: a space in an enum value cannot form the per-value trigger
+  state Indigo builds underneath it, so the whole write was dropped rather than just shown
+  wrong. Fixed at the root — every runtime string now clears the five reserved characters
+  the same way it already clears non-ASCII ones, and the option is named `noRule`.
 
 ### 1.11
 

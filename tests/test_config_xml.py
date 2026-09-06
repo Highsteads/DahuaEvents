@@ -89,5 +89,40 @@ class TestDialogXml(unittest.TestCase):
                                 f"visibleBindingId {binding!r} names no field in this dialog")
 
 
+class TestEnumStateOptionValues(unittest.TestCase):
+    """A Devices.xml State with a ValueType List gets an auto-generated boolean
+    sub-state per Option, named `<state_id>.<option_value>` (global CLAUDE.md
+    "enum auto-generates bool sub-states"). A value containing a space cannot
+    form a legal sub-state id, so Indigo refuses the WHOLE write with
+    `cannot update device state for key <id> to value <value>` even though the
+    Option is declared correctly — exactly what happened to `streamState`
+    "no rule" (found 02-09-2026, TRIAGE_QUEUE, fixed to "noRule").
+    """
+
+    def _enum_states(self):
+        for path in XML_FILES:
+            root = ET.parse(path).getroot()
+            for state in root.iter("State"):
+                options = state.findall("./ValueType/List/Option")
+                if options:
+                    yield os.path.basename(path), state.get("id"), options
+
+    def test_there_are_enum_states_to_check(self):
+        # This repo has exactly one today (streamState) — if that ever becomes
+        # zero the glob or the tag name changed under this test and it would
+        # otherwise pass vacuously.
+        self.assertTrue(list(self._enum_states()), "no List-enum States found")
+
+    def test_option_values_contain_no_whitespace(self):
+        for xml_name, state_id, options in self._enum_states():
+            for opt in options:
+                value = opt.get("value")
+                with self.subTest(xml=xml_name, state=state_id, value=value):
+                    self.assertNotRegex(
+                        value or "", r"\s",
+                        f"{state_id}.{value} would be the auto-generated sub-state "
+                        f"id — a space in it makes Indigo refuse the whole write")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -105,7 +105,7 @@
                         <Option value="connected">Connected</Option>
                         <Option value="reconnecting">Reconnecting</Option>
                         <Option value="unsupported">Unsupported</Option>
-                        <Option value="no rule">No rule drawn on the camera</Option>
+                        <Option value="noRule">No rule drawn on the camera</Option>
                         <Option value="disabled">Disabled on camera</Option>
                     </List>
                 </ValueType>

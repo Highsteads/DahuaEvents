@@ -373,6 +373,19 @@ class TestAsciiOnly(unittest.TestCase):
     def test_control_characters_go_too(self):
         self.assertEqual(dp.ascii_only("a\x00b\tc\nd"), "a?b?c?d")
 
+    def test_xml_reserved_characters_go_too(self):
+        """The actual regression: device creation for 'Patio' failed with
+        `illegal character in XML tag name or value` on a printable-ASCII
+        character that is nonetheless illegal in this position. Found
+        02-09-2026, TRIAGE_QUEUE — every one of the five must be caught."""
+        self.assertEqual(dp.ascii_only("Tom & Jerry's <shed> \"back\""),
+                         "Tom ? Jerry?s ?shed? ?back?")
+
+    def test_each_reserved_character_alone(self):
+        for char in "&<>\"'":
+            with self.subTest(char=char):
+                self.assertEqual(dp.ascii_only(f"a{char}b"), "a?b")
+
     def test_summarise_output_is_always_ascii(self):
         """The actual regression. summarise() feeds a dialog field, so whatever it
         returns must survive Indigo's XML layer."""
