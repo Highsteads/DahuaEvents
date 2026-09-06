@@ -15,8 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        03-09-2026
-# Version:     1.10
-
+# Version:     1.11
 try:
     import indigo
 except ImportError:
@@ -32,10 +31,11 @@ from datetime import datetime
 
 _sys.path.insert(0, _os.getcwd())   # bundled alongside this file in Server Plugin/
 try:
-    from plugin_utils import install_timestamp_filter, log_startup_banner
+    from plugin_utils import as_bool, install_timestamp_filter, log_startup_banner
 except ImportError:
     log_startup_banner = None
     install_timestamp_filter = None
+    as_bool = None
 
 import dahua_probe
 from dahua_stream import HoldTimer, drain
@@ -62,6 +62,19 @@ PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
 PLUGIN_VERSION = "1.10"
 
 DEFAULT_HOLD_SECONDS = 20
+
+# Whether the per-detection narration ("Drive Person: DETECTED" / "clear") is
+# echoed to Indigo's SHARED event log. Default OFF, and deliberately so.
+#
+# The event log is the whole estate's dashboard and every plugin writes to it. Two
+# cameras on their own put 52-54 lines a day into it (measured 03-05 Sep 2026, and
+# those were the ONLY DahuaEvents lines on each of those days): a pair per
+# detection, saying exactly what the device's own onOffState already says, and
+# growing with every camera added. The narration is not lost when this is off: it
+# still goes to the plugin's own log at Logs/<bundle id>/plugin.log, because
+# Indigo's event-log handler sits at INFO while the plugin's file handler sits at
+# THREADDEBUG (plugin_base.py:274 and :300).
+DEFAULT_LOG_ACTIVITY = False
 
 # Detection classes, and the camera event code that drives each.
 # Two families. SMD (2022-ish firmware onward) classifies on its own with nothing
@@ -145,6 +158,7 @@ class Plugin(indigo.PluginBase):
         self.cam_user = DAHUA_USER or pluginPrefs.get("dahuaUser", "")
         self.cam_pass = DAHUA_PASS or pluginPrefs.get("dahuaPass", "")
         self.hold_seconds = self._hold_from_prefs(pluginPrefs)
+        self.log_activity = self._log_activity_from_prefs(pluginPrefs)
 
         # Runtime state. OWNERSHIP, deliberately: everything below is touched only
         # by the plugin's main thread (Indigo dispatches every callback on it), with
@@ -182,6 +196,21 @@ class Plugin(indigo.PluginBase):
             self.logger.warning(f"holdSeconds cannot be negative ({value}) — using 0s")
             return 0
         return value
+
+    def _log_activity_from_prefs(self, prefs):
+        """Whether detections are echoed to the shared event log. Quiet by default.
+
+        A checkbox round-trips as a real bool, but a value that has never been saved
+        arrives absent and a hand-edited .indiPref can hold text, and bool("false")
+        is True, which is the wrong answer in the direction that fills the log.
+        as_bool() returns the DEFAULT for anything it does not recognise, so junk in
+        the pref leaves the plugin quiet rather than loud. Without plugin_utils only
+        a literal True counts, which errs the same way.
+        """
+        raw = prefs.get("logActivityToEventLog", DEFAULT_LOG_ACTIVITY)
+        if as_bool is None:
+            return raw is True
+        return as_bool(raw, DEFAULT_LOG_ACTIVITY)
 
     # --------------------------------------------------------
     # Lifecycle
@@ -230,6 +259,7 @@ class Plugin(indigo.PluginBase):
         self.cam_user = DAHUA_USER or valuesDict.get("dahuaUser", "")
         self.cam_pass = DAHUA_PASS or valuesDict.get("dahuaPass", "")
         self.hold_seconds = self._hold_from_prefs(valuesDict)
+        self.log_activity = self._log_activity_from_prefs(valuesDict)
 
     # --------------------------------------------------------
     # Device lifecycle — stage 3
@@ -467,8 +497,19 @@ class Plugin(indigo.PluginBase):
                 elif status == "connected":
                     dev.setErrorStateOnServer("")
             if detail:
-                level = self.logger.warning if status != "connected" else self.logger.info
-                level(f"{address}: {status} — {detail}")
+                # Written out as two direct calls rather than the one-line ternary
+                # this used to be (level = self.logger.warning if ... else ...;
+                # level(line)). The suite's structural guards match on a literal
+                # self.logger.<level>(...) call, so a bound-method alias made this
+                # WARNING invisible to them: it was not counted by the "no fault
+                # line was lost" guard, and could have been demoted to info with the
+                # whole suite still green. test_no_logger_method_is_reached_through
+                # _an_alias now forbids the alias so it cannot come back.
+                line = f"{address}: {status} — {detail}"
+                if status == "connected":
+                    self.logger.info(line)
+                else:
+                    self.logger.warning(line)
         if overflowed:
             self.logger.warning("status queue is running behind — a camera is flapping")
 
@@ -543,8 +584,30 @@ class Plugin(indigo.PluginBase):
                 dev.updateStateOnServer("detectionsToday", 0)
 
     def _write_on_off(self, dev, on):
+        """Write the device state, and narrate it to the plugin's OWN log.
+
+        This line used to go to Indigo's shared event log at INFO, and it was the
+        only thing this plugin put there once a camera was running: 52, 54 and 52
+        lines on 03, 04 and 05 Sep 2026, a DETECTED/clear pair per person walking
+        past, and rising with every camera added. It said nothing the device's own
+        onOffState did not already say, and the estate's event log was carrying
+        about 2,031 lines a day between all the plugins.
+
+        At DEBUG it still reaches Logs/<bundle id>/plugin.log in full, because
+        Indigo's event-log handler is set to INFO while the plugin's own file
+        handler is set to THREADDEBUG. Nothing is lost. It just stops filling a
+        shared log by default, and anyone who wants the running commentary back
+        ticks "Log detections to the Indigo event log" in Configure.
+
+        The message is identical either way, so the plugin's own log reads the same
+        whichever way the checkbox is set.
+        """
         dev.updateStateOnServer("onOffState", on)
-        self.logger.info(f"{dev.name}: {'DETECTED' if on else 'clear'}")
+        line = f"{dev.name}: {'DETECTED' if on else 'clear'}"
+        if self.log_activity:
+            self.logger.info(line)
+        else:
+            self.logger.debug(line)
 
     @staticmethod
     def _bump_count(dev):

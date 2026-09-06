@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.10
+**Version:** 1.11
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.

@@ -26,4 +26,15 @@
         <Description>Default for all cameras; can be overridden per camera</Description>
     </Field>
 
+    <Field id="sep2" type="separator"/>
+
+    <Field id="loggingLabel" type="label">
+        <Label>Every detection is always written in full to this plugin's own log file, at Logs/com.clives.indigoplugin.dahuaevents/plugin.log. The setting below only decides whether it is ALSO echoed to Indigo's shared event log, which every plugin writes to. Two cameras put about fifty lines a day there saying what the devices already show, so it is off to begin with. Warnings and errors always appear in the event log whichever way this is set.</Label>
+    </Field>
+
+    <Field id="logActivityToEventLog" type="checkbox" defaultValue="false">
+        <Label>Log detections to the Indigo event log:</Label>
+        <Description>Adds a line to the shared event log each time a detection starts and clears</Description>
+    </Field>
+
 </PluginConfig>
