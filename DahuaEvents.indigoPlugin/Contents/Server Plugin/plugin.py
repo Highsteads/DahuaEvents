@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        06-09-2026
-# Version:     1.12
+# Version:     1.13
 try:
     import indigo
 except ImportError:
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.12"
+PLUGIN_VERSION = "1.13"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -170,6 +170,8 @@ class Plugin(indigo.PluginBase):
         self._stops    = {}                  # address -> threading.Event
         self._timers   = {}                  # device id -> HoldTimer
         self._by_camera = {}                 # address -> {class -> device id}
+        self._blocked  = {}                  # device id -> True while camera-side config
+                                              # (no rule / disabled / unsupported) blocks it
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -301,6 +303,15 @@ class Plugin(indigo.PluginBase):
             dev = indigo.devices.get(dev_id)
             if dev is None:
                 return
+            # BLOCKED means the CAMERA has told us this class cannot fire until
+            # something changes there — no rule drawn, switched off, or the
+            # firmware doesn't support it. That is a fact about configuration,
+            # not about whether the event STREAM happens to be reachable right
+            # now, so _drain_statuses must not let a worker-level "connected"
+            # (the stream merely being open) paint a blocked device healthy —
+            # see the comment there.
+            self._blocked[dev_id] = verdict in (
+                dahua_probe.NO_RULE, dahua_probe.DISABLED, dahua_probe.UNSUPPORTED)
             if verdict == dahua_probe.CAPABLE:
                 dev.updateStateOnServer("streamState", "connected")
                 dev.setErrorStateOnServer("")
@@ -326,6 +337,7 @@ class Plugin(indigo.PluginBase):
         address = dev.pluginProps.get("address", "").strip()
         klass   = dev.pluginProps.get("detectionClass", "person")
         self._timers.pop(dev.id, None)
+        self._blocked.pop(dev.id, None)
         if address in self._by_camera:
             self._by_camera[address].pop(klass, None)
             # The stream is shared by the pair, so it only stops when the last
@@ -489,6 +501,17 @@ class Plugin(indigo.PluginBase):
             for dev_id in self._by_camera.get(address, {}).values():
                 dev = indigo.devices.get(dev_id)
                 if dev is None:
+                    continue
+                if status == "connected" and self._blocked.get(dev_id):
+                    # This device's own settled verdict — no rule drawn,
+                    # switched off, or unsupported — is a camera-CONFIG fact.
+                    # The shared per-camera worker reconnecting says only that
+                    # the event STREAM is reachable, which is a different axis
+                    # and has no bearing on it. Painting the device "connected"
+                    # here is exactly the failure this plugin exists to catch:
+                    # a camera that looks perfectly healthy and will never
+                    # fire. A fresh Send Status Request (or a device restart)
+                    # is what re-settles this — not the stream reconnecting.
                     continue
                 dev.updateStateOnServer("streamState", status)
                 if status == "unsupported":
