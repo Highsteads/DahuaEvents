@@ -108,6 +108,10 @@ about deleting.
 
 ## Changelog
 
+### 1.11
+
+- **Detection narration moved to the plugin's own log.** About 47 lines a day of `Drive Person: DETECTED` and its clear were going into the shared Indigo event log. The device states change either way, so nothing is lost from dashboards or triggers, and a new tick box puts the narration back. Camera connection faults still reach the event log, and the test guarding them can now see a fault site it had been blind to.
+
 ### 1.10
 - **A quiet camera no longer looks dead.** Each camera's own status was only ever reported once
   — the moment its stream connected — so a camera that went hours with nothing to say (no
