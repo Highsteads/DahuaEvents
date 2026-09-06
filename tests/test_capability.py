@@ -259,8 +259,15 @@ class TestAssessIvs(unittest.TestCase):
         self.assertIn("no such rule", reason)
 
     def test_a_rule_that_exists_but_is_switched_off_is_not_capable(self):
+        """This test used to assert dp.NO_RULE, which was the bug, not the
+        contract: the reason text already said correctly "a rule exists ...
+        but is switched off", while the verdict thrown away that distinction
+        and told the device "no rule drawn" — a real, different, actionable
+        diagnosis. Found 06-09-2026 disabling a real rule on Patio as a live
+        test. Flipped to assert the DISABLED verdict the reason text always
+        implied."""
         verdict, reason = dp.assess_ivs(IVS_EVENTS, RULES_TRIPWIRE_OFF, "crossline")
-        self.assertEqual(verdict, dp.NO_RULE)
+        self.assertEqual(verdict, dp.DISABLED)
         self.assertIn("switched off", reason)
         self.assertIn("DriveLine", reason, "name the rule so it can be found")
 

@@ -15,7 +15,7 @@
 #              Stage 4 remains: rollout across all cameras, README, release.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        06-09-2026
-# Version:     1.14
+# Version:     1.15
 try:
     import indigo
 except ImportError:
@@ -59,7 +59,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.14"
+PLUGIN_VERSION = "1.15"
 
 DEFAULT_HOLD_SECONDS = 20
 

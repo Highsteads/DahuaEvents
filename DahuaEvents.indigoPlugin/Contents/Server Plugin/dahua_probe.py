@@ -15,7 +15,7 @@
 #              hardware. The network layer is a thin shell at the bottom.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        06-09-2026
-# Version:     1.1
+# Version:     1.2
 
 import re
 import urllib.error
@@ -150,7 +150,15 @@ def assess_ivs(event_text, rule_text, klass):
                 f"add one in the camera's own web interface, then restart this device")
     if not any(enabled for _, enabled, _ in matching):
         names = ", ".join(n or "unnamed" for _, _, n in matching)
-        return (NO_RULE,
+        # DISABLED, not NO_RULE: the rule EXISTS, the reason text already says
+        # so correctly ("a CrossLineDetection rule exists (IVS-1) but is
+        # switched off at the camera") — but returning NO_RULE here discarded
+        # that distinction downstream. plugin.py's _settle_device branches on
+        # the VERDICT, not the reason string, so the device showed the
+        # generic "no rule drawn on the camera" instead of "switched off at
+        # the camera" — a real, different, actionable diagnosis thrown away.
+        # Found 06-09-2026 disabling a real rule on Patio as a live test.
+        return (DISABLED,
                 f"a {code} rule exists ({names}) but is switched off at the camera")
     return CAPABLE, f"an enabled {code} rule is drawn on the camera"
 
