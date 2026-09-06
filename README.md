@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.13
+**Version:** 1.14
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,16 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.14
+- **A tripwire or intrusion zone could be drawn, switched on, and never be seen.** The
+  camera reports which kind of rule each one is in two different places depending on its
+  firmware — an older generation puts it plainly, a newer one puts "Normal" there and the
+  real answer somewhere else. This plugin only ever looked at the first place, so on a
+  camera using the second, a rule that was genuinely drawn and enabled looked exactly like
+  no rule at all, forever. Found by drawing a real tripwire and a real intrusion zone on a
+  test camera and watching the plugin still say neither existed. Fixed to check both places
+  a camera might put the answer.
 
 ### 1.13
 - **A camera that will never fire could look perfectly healthy.** Two devices can share one

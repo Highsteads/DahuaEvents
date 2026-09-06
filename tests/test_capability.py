@@ -186,6 +186,29 @@ table.VideoAnalyseRule[0][1].Enable=false
 table.VideoAnalyseRule[0][1].Name=DriveLine
 """
 
+# Shape B — a REAL VideoAnalyseRule body, shortened, from Patio (a 2021-07-07-
+# build camera) captured 06-09-2026 immediately after drawing and enabling a
+# genuine tripwire and intrusion zone through the camera's OWN web UI. Class
+# is "Normal" for BOTH ordinary IVS rules here — it is only ever a real
+# category name for the special FaceDetection entry — and the actual category
+# lives in Type, and ONLY in Type. This is the shape that made parse_rules()
+# matching on Class alone permanently blind to a real, enabled rule: NO_RULE
+# for ever, on a camera that had a rule drawn and switched on the whole time.
+RULES_PATIO_SHAPE = """
+table.VideoAnalyseRule[0][0].Class=FaceDetection
+table.VideoAnalyseRule[0][0].Enable=true
+table.VideoAnalyseRule[0][0].Name=FaceDetection
+table.VideoAnalyseRule[0][0].Type=FaceDetection
+table.VideoAnalyseRule[0][1].Class=Normal
+table.VideoAnalyseRule[0][1].Enable=true
+table.VideoAnalyseRule[0][1].Name=IVS-1
+table.VideoAnalyseRule[0][1].Type=CrossLineDetection
+table.VideoAnalyseRule[0][2].Class=Normal
+table.VideoAnalyseRule[0][2].Enable=true
+table.VideoAnalyseRule[0][2].Name=IVS-2
+table.VideoAnalyseRule[0][2].Type=CrossRegionDetection
+"""
+
 IVS_EVENTS = "\n".join(f"events[{i}]={c}" for i, c in enumerate(
     ["CrossLineDetection", "CrossRegionDetection", "VideoMotion"]))
 
@@ -215,6 +238,15 @@ class TestParseRules(unittest.TestCase):
         for bad in ("", None, "not a config"):
             self.assertEqual(dp.parse_rules(bad), [])
 
+    def test_shape_b_reads_type_when_class_is_just_normal(self):
+        """The actual regression: Class=Normal carries no information on this
+        firmware, and the real category is in Type, and ONLY in Type."""
+        self.assertEqual(
+            dp.parse_rules(RULES_PATIO_SHAPE),
+            [("FaceDetection", True, "FaceDetection"),
+             ("CrossLineDetection", True, "IVS-1"),
+             ("CrossRegionDetection", True, "IVS-2")])
+
 
 class TestAssessIvs(unittest.TestCase):
 
@@ -239,6 +271,16 @@ class TestAssessIvs(unittest.TestCase):
     def test_a_rule_of_the_wrong_class_does_not_count(self):
         verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_WITH_TRIPWIRE, "crossregion")
         self.assertEqual(verdict, dp.NO_RULE)
+
+    def test_shape_b_tripwire_is_capable(self):
+        """The live Patio regression, driven through the real assess_ivs — not
+        just parse_rules in isolation."""
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_PATIO_SHAPE, "crossline")
+        self.assertEqual(verdict, dp.CAPABLE)
+
+    def test_shape_b_intrusion_is_capable(self):
+        verdict, _ = dp.assess_ivs(IVS_EVENTS, RULES_PATIO_SHAPE, "crossregion")
+        self.assertEqual(verdict, dp.CAPABLE)
 
     def test_firmware_without_the_event_is_unsupported_not_no_rule(self):
         """Different problems, different fixes: one is 'draw a rule', the other is

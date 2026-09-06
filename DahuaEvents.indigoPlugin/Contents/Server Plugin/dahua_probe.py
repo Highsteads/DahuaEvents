@@ -13,9 +13,9 @@
 #              Everything above the fetch_* functions is PURE — text in, verdict out,
 #              no sockets, no clock, no indigo import — so it runs under test with no
 #              hardware. The network layer is a thin shell at the bottom.
-# Author:      CliveS & Claude Opus 5
-# Date:        01-09-2026
-# Version:     1.0
+# Author:      CliveS & Claude Sonnet 5
+# Date:        06-09-2026
+# Version:     1.1
 
 import re
 import urllib.error
@@ -84,22 +84,39 @@ def parse_enable_flag(text, param):
 
 
 def parse_rules(rule_text):
-    """Return [(class, enabled, name)] from a VideoAnalyseRule config body.
+    """Return [(rule_type, enabled, name)] from a VideoAnalyseRule config body.
 
     Lines look like:
-        table.VideoAnalyseRule[0][2].Class=CrossLineDetection
+        table.VideoAnalyseRule[0][2].Class=CrossLineDetection   (shape A)
+        table.VideoAnalyseRule[0][2].Type=CrossLineDetection    (shape B)
+        table.VideoAnalyseRule[0][2].Class=Normal               (shape B)
         table.VideoAnalyseRule[0][2].Enable=true
+
+    TWO SHAPES CONFIRMED ON REAL HARDWARE, and they disagree. Shape A (Left
+    Garage Door, captured 01-09-2026) writes the real category straight into
+    Class. Shape B (Patio, a 2021-07-07-build camera, captured 06-09-2026
+    after genuinely drawing and enabling a tripwire through the camera's own
+    web UI) writes Class=Normal for every ordinary IVS rule — Class is only
+    ever a real category name for the special FaceDetection entry — and puts
+    the actual category in Type instead. Matching on Class alone (the
+    original, assumed-not-measured shape) made a real, drawn, enabled rule
+    invisible FOR EVER on shape-B firmware: NO_RULE regardless of what was
+    actually configured, which is precisely the failure this capability check
+    exists to catch. Type is preferred when both are present and disagree,
+    because Class=Normal carries no information; falling back to Class covers
+    shape A, where Type may be absent altogether.
     Slots are sparse and unordered, so they are gathered by index rather than
     assumed adjacent.
     """
     if not rule_text:
         return []
     slots = {}
-    for m in re.finditer(r"VideoAnalyseRule\[(\d+)\]\[(\d+)\]\.(Class|Enable|Name)=(\S*)",
+    for m in re.finditer(r"VideoAnalyseRule\[(\d+)\]\[(\d+)\]\.(Class|Type|Enable|Name)=(\S*)",
                          rule_text):
         ch, idx, key, val = m.groups()
         slots.setdefault((ch, idx), {})[key] = val
-    return [(d.get("Class", ""), d.get("Enable", "").lower() == "true", d.get("Name", ""))
+    return [(d.get("Type") or d.get("Class", ""),
+             d.get("Enable", "").lower() == "true", d.get("Name", ""))
             for _, d in sorted(slots.items())]
 
 
