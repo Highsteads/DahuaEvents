@@ -24,8 +24,15 @@
         </dict>
     </array>
     <!-- The version Indigo actually displays. Digits and dots only. -->
+    <key>GithubInfo</key>
+    <dict>
+    	<key>GithubRepo</key>
+    	<string>DahuaEvents</string>
+    	<key>GithubUser</key>
+    	<string>Highsteads</string>
+    </dict>
     <key>PluginVersion</key>
-    <string>1.15</string>
+    <string>1.16</string>
     <key>ServerApiVersion</key>
     <string>3.0</string>
 </dict>

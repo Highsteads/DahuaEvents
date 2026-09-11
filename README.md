@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.15
+**Version:** 1.16
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,10 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.16
+
+**The bundle now carries the standard GitHub record.** Indigo plugins can carry a small note inside the bundle saying where their source lives on GitHub, spelt the way the Indigo Domotics and community plugins spell it. This one now has it, pointing at this repository. Nothing else changed.
 
 ### 1.15
 - **Switching a rule off at the camera showed the wrong reason.** The plugin already
