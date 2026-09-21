@@ -75,11 +75,11 @@ class TestBlockedVerdictSurvivesConnected(unittest.TestCase):
     def _assert_survives_connected(self, verdict, expected_state, expected_error):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.67", "crossline", verdict)
+        _settle(p, dev, "192.168.1.200", "crossline", verdict)
         self.assertEqual(dev.states["streamState"], expected_state)
         self.assertEqual(dev.errorState, expected_error)
 
-        p._statuses.put(("192.168.100.67", "connected", ""))
+        p._statuses.put(("192.168.1.200", "connected", ""))
         p._drain_statuses()
 
         self.assertEqual(
@@ -109,11 +109,11 @@ class TestUnblockedBehaviourIsUnchanged(unittest.TestCase):
     def test_a_capable_device_still_shows_connected(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.68", "crossline", dahua_probe.CAPABLE)
+        _settle(p, dev, "192.168.1.201", "crossline", dahua_probe.CAPABLE)
         self.assertEqual(dev.states["streamState"], "connected")
         self.assertEqual(dev.errorState, "")
 
-        p._statuses.put(("192.168.100.68", "connected", ""))
+        p._statuses.put(("192.168.1.201", "connected", ""))
         p._drain_statuses()
         self.assertEqual(dev.states["streamState"], "connected")
         self.assertEqual(dev.errorState, "")
@@ -121,9 +121,9 @@ class TestUnblockedBehaviourIsUnchanged(unittest.TestCase):
     def test_a_capable_device_still_shows_reconnecting(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.68", "crossline", dahua_probe.CAPABLE)
+        _settle(p, dev, "192.168.1.201", "crossline", dahua_probe.CAPABLE)
 
-        p._statuses.put(("192.168.100.68", "reconnecting", "no heartbeat"))
+        p._statuses.put(("192.168.1.201", "reconnecting", "no heartbeat"))
         p._drain_statuses()
         self.assertEqual(dev.states["streamState"], "reconnecting",
                          "a genuine connection fault must still reach a capable device")
@@ -137,9 +137,9 @@ class TestOnlyConnectedIsSuppressed(unittest.TestCase):
     def test_a_blocked_device_still_receives_reconnecting(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.67", "crossline", dahua_probe.NO_RULE)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.NO_RULE)
 
-        p._statuses.put(("192.168.100.67", "reconnecting", "no heartbeat"))
+        p._statuses.put(("192.168.1.200", "reconnecting", "no heartbeat"))
         p._drain_statuses()
         self.assertEqual(
             dev.states["streamState"], "reconnecting",
@@ -148,9 +148,9 @@ class TestOnlyConnectedIsSuppressed(unittest.TestCase):
     def test_a_blocked_device_still_receives_worker_unsupported(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.67", "crossline", dahua_probe.NO_RULE)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.NO_RULE)
 
-        p._statuses.put(("192.168.100.67", "unsupported", "camera stopped advertising events"))
+        p._statuses.put(("192.168.1.200", "unsupported", "camera stopped advertising events"))
         p._drain_statuses()
         self.assertEqual(dev.states["streamState"], "unsupported")
         self.assertEqual(dev.errorState, "camera stopped advertising events")
@@ -164,14 +164,14 @@ class TestReSettleUnblocks(unittest.TestCase):
     def test_settling_capable_after_no_rule_unblocks_the_device(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.67", "crossline", dahua_probe.NO_RULE)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.NO_RULE)
         self.assertTrue(p._blocked[dev.id])
 
-        _settle(p, dev, "192.168.100.67", "crossline", dahua_probe.CAPABLE)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.CAPABLE)
         self.assertFalse(p._blocked[dev.id])
         self.assertEqual(dev.states["streamState"], "connected")
 
-        p._statuses.put(("192.168.100.67", "connected", ""))
+        p._statuses.put(("192.168.1.200", "connected", ""))
         p._drain_statuses()
         self.assertEqual(dev.states["streamState"], "connected")
 
@@ -181,10 +181,10 @@ class TestBlockedFlagIsCleanedUp(unittest.TestCase):
     def test_devicestopcomm_pops_the_blocked_flag(self):
         p = make_plugin()
         dev = FakeDevice(1)
-        _settle(p, dev, "192.168.100.67", "crossline", dahua_probe.NO_RULE)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.NO_RULE)
         self.assertIn(dev.id, p._blocked)
 
-        dev.pluginProps = {"address": "192.168.100.67", "detectionClass": "crossline"}
+        dev.pluginProps = {"address": "192.168.1.200", "detectionClass": "crossline"}
         p.deviceStopComm(dev)
         self.assertNotIn(dev.id, p._blocked,
                          "a stopped device left a stale blocked flag behind")
