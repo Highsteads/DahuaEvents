@@ -1,6 +1,6 @@
 # DahuaEvents
 
-**Version:** 1.16
+**Version:** 1.17
 
 Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
 person and vehicle detections can drive triggers, notifications and control pages.
@@ -107,6 +107,10 @@ or script pointing at the old ones will quietly stop working. Rename them freely
 about deleting.
 
 ## Changelog
+
+### 1.17
+
+**Doorbells.** A Dahua or Amcrest video doorbell can now have a **Doorbell Pressed** device, which switches on when somebody presses the button and off again once the hold runs out, so a press can drive a trigger like any other detection. Tick **Doorbell button** when you add the doorbell, or choose **Doorbell button pressed** in an existing device's settings. The button reports itself as an unanswered call, and at least the Amcrest AD110 sends that without listing it among the events it offers, so the plugin decides from the model instead. An ordinary camera given a doorbell device says it is not a doorbell rather than sitting there looking healthy and never firing.
 
 ### 1.16
 

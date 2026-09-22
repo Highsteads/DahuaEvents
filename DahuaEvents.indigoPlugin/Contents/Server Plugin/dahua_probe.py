@@ -39,6 +39,19 @@ IVS_CODES = {
 }
 NO_RULE      = "no_rule"        # firmware can, but nothing is configured to fire
 
+# Doorbells report a button press as CallNoAnswered: Start when the button is
+# pressed, Stop when the call times out unanswered. The catch is that at least the
+# Amcrest AD110 (firmware 1.000.00AC009, 2022) does NOT list that code in
+# getExposureEvents while sending it all the same — measured 22-09-2026 on a real
+# press: absent from the list, delivered on the stream. So for this class the
+# advertised list can only say yes, never no, and the device type has to decide.
+DOORBELL_CODE = "CallNoAnswered"
+DOORBELL_TYPE_PREFIXES = ("AD1", "AD4", "AD5", "DB", "VTO", "DHI-VTO", "DH-VTO")
+
+# Codes a camera may emit without advertising them. The worker's up-front
+# "does this camera offer anything we want" check must not halt on these.
+UNADVERTISED_CODES = frozenset({DOORBELL_CODE})
+
 # Verdicts. Anything other than CAPABLE means "do not expect events from this camera",
 # and each carries a reason the user can act on.
 CAPABLE      = "capable"        # advertises the smart codes and is switched on
@@ -163,6 +176,36 @@ def assess_ivs(event_text, rule_text, klass):
     return CAPABLE, f"an enabled {code} rule is drawn on the camera"
 
 
+def parse_device_type(text):
+    """The model from magicBox.cgi?action=getDeviceType ("type=AD110"). "" when unknown."""
+    m = re.search(r"type=([^\r\n]+)", text or "")
+    return m.group(1).strip() if m else ""
+
+
+def assess_doorbell(event_text, type_text):
+    """Will this device report its button being pressed? Returns (verdict, reason).
+
+    Advertising the code is proof. Not advertising it is NOT proof of absence,
+    because a real doorbell was measured sending it unlisted (see DOORBELL_CODE),
+    so the device type decides the rest. A camera that is neither is refused: a
+    Doorbell Pressed device on an ordinary camera would look healthy and never
+    fire, which is the failure this module exists to prevent.
+    """
+    codes = parse_event_list(event_text)
+    if not codes:
+        return UNREACHABLE, "camera did not return an event list"
+    if DOORBELL_CODE in codes:
+        return CAPABLE, f"advertises {DOORBELL_CODE}, the button-press event"
+    model = parse_device_type(type_text)
+    if model.upper().startswith(DOORBELL_TYPE_PREFIXES):
+        return (CAPABLE,
+                f"{model} is a doorbell: it sends {DOORBELL_CODE} on a press "
+                f"without listing it")
+    return (UNSUPPORTED,
+            f"not a doorbell (device type {model or 'unknown'}) and it does not "
+            f"advertise {DOORBELL_CODE}")
+
+
 def assess(event_text, smd_text, motion_text):
     """Decide what a camera can actually do. Returns (verdict, reason).
 
@@ -261,6 +304,24 @@ def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
+def probe_doorbell(address, user, password, timeout=HTTP_TIMEOUT):
+    """Ask one device whether it will report its button. NEVER raises."""
+    try:
+        if not address:
+            return UNREACHABLE, "no address configured"
+        if not user or not password:
+            return UNREACHABLE, "no camera credentials — set DAHUA_USER / DAHUA_PASS"
+        events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
+                       user, password, timeout)
+        if events is None:
+            return UNREACHABLE, "no answer on port 80"
+        dtype = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
+                      user, password, timeout)
+        return assess_doorbell(events, dtype)
+    except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
+        return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
+
+
 def probe(address, user, password, timeout=HTTP_TIMEOUT):
     """Ask one camera what it can do. Returns (verdict, reason). NEVER raises.
 
@@ -305,10 +366,10 @@ def firmware(address, user, password, timeout=HTTP_TIMEOUT):
 
 
 # A dialog cannot wait: Indigo gives a UI callback about thirty seconds before it
-# gives up and leaves the dialog broken. Probing four classes one at a time would
-# re-fetch the same three documents four times over, so this fetches each ONCE and
-# then answers every question from them. Four requests, bounded, whatever the
-# camera does.
+# gives up and leaves the dialog broken. Probing five classes one at a time would
+# re-fetch the same documents five times over, so this fetches each ONCE and then
+# answers every question from them. Five requests at 4 s each is 20 s at worst,
+# inside the limit, and an address with nothing at it stops after the first.
 DIALOG_TIMEOUT = 4
 
 
@@ -319,7 +380,7 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
     picture at once rather than making the user discover it a device at a time.
     NEVER raises: a dialog that throws is worse than one that reports a problem.
     """
-    classes = ["person", "vehicle"] + list(IVS_CODES)
+    classes = ["person", "vehicle"] + list(IVS_CODES) + ["doorbell"]
     try:
         if not address:
             return {k: (UNREACHABLE, "no address given") for k in classes}
@@ -338,10 +399,14 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         rules  = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
                        user, password, timeout)
 
+        dtype  = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
+                       user, password, timeout)
+
         smd_verdict = assess(events, smd, motion)
         out = {"person": smd_verdict, "vehicle": smd_verdict}
         for klass in IVS_CODES:
             out[klass] = assess_ivs(events, rules, klass)
+        out["doorbell"] = assess_doorbell(events, dtype)
         return out
     except Exception as exc:                    # noqa: BLE001 - a dialog must not throw
         return {k: (UNREACHABLE, f"unexpected error: {exc!r}") for k in classes}
@@ -373,10 +438,12 @@ def summarise(caps):
     """One short line per class, for a dialog field. Ordered, so it reads the same
     every time and a changed answer is noticeable. ASCII ONLY — see ascii_only()."""
     labels = {"person": "People", "vehicle": "Vehicles",
-              "crossline": "Tripwire", "crossregion": "Intrusion"}
+              "crossline": "Tripwire", "crossregion": "Intrusion",
+              "doorbell": "Doorbell"}
     marks  = {CAPABLE: "yes", DISABLED: "off at the camera",
               NO_RULE: "no rule drawn", UNSUPPORTED: "not supported",
               UNREACHABLE: "could not tell"}
     return ascii_only(" | ".join(f"{labels[k]}: {marks.get(caps[k][0], '?')}"
-                                 for k in ("person", "vehicle", "crossline", "crossregion")
+                                 for k in ("person", "vehicle", "crossline", "crossregion",
+                                           "doorbell")
                                  if k in caps))

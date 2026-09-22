@@ -319,8 +319,8 @@ class TestAssessIvs(unittest.TestCase):
 class TestCapabilities(unittest.TestCase):
     """One round of fetches answering every class, for the setup dialog.
 
-    Indigo gives a UI callback about thirty seconds. Probing four classes
-    separately would fetch the same three documents four times; this must not.
+    Indigo gives a UI callback about thirty seconds. Probing five classes
+    separately would fetch the same documents five times; this must not.
     """
 
     def _stub(self, events=None, smd=None, motion=None, rules=None):
@@ -329,6 +329,7 @@ class TestCapabilities(unittest.TestCase):
             "SmartMotionDetect": smd,
             "name=MotionDetect": motion,
             "VideoAnalyseRule": rules,
+            "getDeviceType": "type=IP Camera",
         }
         self.fetches = []
 
@@ -347,9 +348,9 @@ class TestCapabilities(unittest.TestCase):
             dp.capabilities("192.168.1.64", "u", "p")
         finally:
             dp.fetch = original
-        self.assertEqual(len(self.fetches), 4,
-                         f"expected 4 requests, made {len(self.fetches)}: {self.fetches}")
-        self.assertEqual(len(set(self.fetches)), 4, "no document should be fetched twice")
+        self.assertEqual(len(self.fetches), 5,
+                         f"expected 5 requests, made {len(self.fetches)}: {self.fetches}")
+        self.assertEqual(len(set(self.fetches)), 5, "no document should be fetched twice")
 
     def test_it_answers_every_class(self):
         # ALL_EVENTS on purpose: this asserts three DIFFERENT verdicts, which needs
@@ -360,8 +361,10 @@ class TestCapabilities(unittest.TestCase):
             caps = dp.capabilities("192.168.1.64", "u", "p")
         finally:
             dp.fetch = original
-        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion"})
+        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion",
+                                     "doorbell"})
         self.assertEqual(caps["person"][0], dp.CAPABLE)
+        self.assertEqual(caps["doorbell"][0], dp.UNSUPPORTED)   # an ordinary camera
         self.assertEqual(caps["crossline"][0], dp.CAPABLE)
         self.assertEqual(caps["crossregion"][0], dp.NO_RULE)
 
@@ -373,7 +376,8 @@ class TestCapabilities(unittest.TestCase):
             caps = dp.capabilities("192.168.1.64", "u", "p")
         finally:
             dp.fetch = original
-        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion"})
+        self.assertEqual(set(caps), {"person", "vehicle", "crossline", "crossregion",
+                                     "doorbell"})
         self.assertTrue(all(v == dp.UNREACHABLE for v, _ in caps.values()))
 
     def test_it_never_raises(self):

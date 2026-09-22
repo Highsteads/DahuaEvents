@@ -45,7 +45,7 @@
 
             <Field id="sepClasses" type="separator"/>
             <Field id="classesLabel" type="label">
-                <Label>Which detections should this camera provide? People and vehicles need Smart Motion Detection, which most cameras from about 2022 onward have. Tripwire and intrusion are the older generation's equivalent and need a line or zone drawn in the camera's own web interface before they report anything.</Label>
+                <Label>Which detections should this camera provide? People and vehicles need Smart Motion Detection, which most cameras from about 2022 onward have. Tripwire and intrusion are the older generation's equivalent and need a line or zone drawn in the camera's own web interface before they report anything. Doorbell button is for a Dahua or Amcrest video doorbell, and switches on when somebody presses it.</Label>
             </Field>
             <Field id="want_person" type="checkbox" defaultValue="true">
                 <Label>People</Label>
@@ -58,6 +58,9 @@
             </Field>
             <Field id="want_crossregion" type="checkbox" defaultValue="false">
                 <Label>Intrusion (zone entered)</Label>
+            </Field>
+            <Field id="want_doorbell" type="checkbox" defaultValue="false">
+                <Label>Doorbell button</Label>
             </Field>
         </ConfigUI>
     </DeviceFactory>
@@ -76,6 +79,7 @@
                     <Option value="vehicle">Vehicles</Option>
                     <Option value="crossline">Tripwire (line crossed)</Option>
                     <Option value="crossregion">Intrusion (zone entered)</Option>
+                    <Option value="doorbell">Doorbell button pressed</Option>
                 </List>
             </Field>
             <Field id="holdOverride" type="textfield">

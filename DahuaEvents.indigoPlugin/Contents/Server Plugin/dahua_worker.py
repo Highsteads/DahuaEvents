@@ -183,7 +183,11 @@ class CameraWorker(threading.Thread):
             dahua_probe.fetch(self.address,
                               "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                               self._user, self._password) or "")
-        if advertised and not (self.codes & advertised):
+        # A code the firmware sends WITHOUT listing it (a doorbell's button, see
+        # dahua_probe.UNADVERTISED_CODES) counts as offered, or a doorbell-only
+        # camera would be halted here for ever over an event it really does send.
+        offered = advertised | dahua_probe.UNADVERTISED_CODES
+        if advertised and not (self.codes & offered):
             self._set_status(UNSUPPORTED,
                              "firmware advertises none of " + ", ".join(sorted(self.codes)))
             return

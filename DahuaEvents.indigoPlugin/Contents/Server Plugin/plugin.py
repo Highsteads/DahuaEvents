@@ -13,9 +13,11 @@
 #              object and it is already thread-safe.
 #
 #              Stage 4 remains: rollout across all cameras, README, release.
-# Author:      CliveS & Claude Fable 5.1
-# Date:        11-09-2026
-# Version:     1.16
+#              1.17 adds a Doorbell button class (CallNoAnswered) for Dahua and
+#              Amcrest video doorbells.
+# Author:      CliveS & Claude Opus 5
+# Date:        22-09-2026 13:10 BST
+# Version:     1.17
 try:
     import indigo
 except ImportError:
@@ -59,7 +61,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.16"
+PLUGIN_VERSION = "1.17"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -86,12 +88,18 @@ CLASS_CODES = {
     "vehicle":     "SmartMotionVehicle",
     "crossline":   "CrossLineDetection",
     "crossregion": "CrossRegionDetection",
+    # A third family: a doorbell's button. Not a detection at all, but it arrives
+    # on the same event stream with the same Start/Stop shape, so the hold logic
+    # serves it unchanged. Capability is judged by device type, see
+    # dahua_probe.assess_doorbell.
+    "doorbell":    "CallNoAnswered",
 }
 CLASS_LABELS = {
     "person":      "Person",
     "vehicle":     "Vehicle",
     "crossline":   "Tripwire",
     "crossregion": "Intrusion",
+    "doorbell":    "Pressed",          # so a camera named Doorbell gives "Doorbell Pressed"
 }
 IVS_CLASSES = ("crossline", "crossregion")
 DEFAULT_CLASSES = ("person", "vehicle")
@@ -385,6 +393,8 @@ class Plugin(indigo.PluginBase):
         """
         if klass in IVS_CLASSES:
             return dahua_probe.probe_ivs(address, self.cam_user, self.cam_pass, klass)
+        if klass == "doorbell":
+            return dahua_probe.probe_doorbell(address, self.cam_user, self.cam_pass)
         return dahua_probe.probe(address, self.cam_user, self.cam_pass)
 
     def _codes_for_camera(self, address):
