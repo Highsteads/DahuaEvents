@@ -12,12 +12,13 @@
 #              That is what makes this lock-free — the queue is the sole shared
 #              object and it is already thread-safe.
 #
-#              Stage 4 remains: rollout across all cameras, README, release.
 #              1.17 adds a Doorbell button class (CallNoAnswered) for Dahua and
 #              Amcrest video doorbells.
-# Author:      CliveS & Claude Opus 5
-# Date:        22-09-2026 13:10 BST
-# Version:     1.17
+#              1.18 fixes a camera's second device never switching on: a running
+#              stream is replaced when it does not ask for every device's code.
+# Author:      CliveS & Claude Opus 5.5
+# Date:        27-09-2026 BST
+# Version:     1.18
 try:
     import indigo
 except ImportError:
@@ -61,7 +62,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.17"
+PLUGIN_VERSION = "1.18"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -144,6 +145,16 @@ def _lvl(level):
 def log(message, level="INFO"):
     indigo.server.log(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {message}",
                       level=_lvl(level))
+
+
+def worker_is_current(worker, codes):
+    """True when a camera's running worker already asks for exactly these codes.
+
+    A worker that has died, or that opened its stream for a different set of
+    codes, must be replaced — its codes are fixed once the stream is open.
+    """
+    return (worker is not None and worker.is_alive()
+            and set(getattr(worker, "codes", ())) == set(codes))
 
 
 # ============================================================
@@ -414,14 +425,25 @@ class Plugin(indigo.PluginBase):
     # --------------------------------------------------------
 
     def _ensure_worker(self, address):
-        """One worker per CAMERA, not per device — the pair share a stream."""
-        if address in self._workers and self._workers[address].is_alive():
+        """One worker per CAMERA, not per device — the pair share a stream.
+
+        The stream asks the camera for a fixed list of event codes, chosen when it
+        opens. Devices start one at a time, so the camera's first device opens the
+        stream for its code alone, and until 1.18 a second device found it running
+        and returned — Vehicle never got its code, and never once switched on in 26
+        days while Person on the same camera switched 1,105 times. So a running
+        worker is kept only when it already asks for every code needed now.
+        """
+        codes = self._codes_for_camera(address)
+        if worker_is_current(self._workers.get(address), codes):
             return
+        if address in self._workers:
+            self._stop_worker(address)
         stop = threading.Event()
         worker = CameraWorker(address, self.cam_user, self.cam_pass,
                               self._events, stop,
                               status_cb=lambda a, s, d: self._statuses.put((a, s, d)),
-                              codes=self._codes_for_camera(address))
+                              codes=codes)
         self._stops[address]   = stop
         self._workers[address] = worker
         worker.start()
@@ -754,7 +776,7 @@ class Plugin(indigo.PluginBase):
         return [
             ("Credentials:", creds),
             ("Hold:",        f"{self.hold_seconds}s"),
-            ("Stage:",       "1 of 4 — probing only, no event streams yet"),
+            ("Cameras:",     str(len(self._by_camera))),
         ]
 
     def _probe_and_log(self, address):

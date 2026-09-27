@@ -7,6 +7,10 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.18 — 27 September 2026
+
+**Vehicle devices now switch on.** On a camera with both a Person and a Vehicle device, the plugin opened the camera's connection when the first device started and asked only for that device's detection. The second device joined the same connection without its detection being added, so it never switched on. On the house this was written for, the Drive camera's Person device switched over a thousand times in September and its Vehicle device not once. The plugin now reopens the connection whenever a device needs a detection it is not asking for, so every device on a camera works, and a device added later works without a restart. Show Plugin Info now says how many cameras are in use, in place of an old line about the plugin's early stages.
+
 ## 1.17 — 22 September 2026
 
 **Doorbells.** A Dahua or Amcrest video doorbell can have a **Pressed** device, which switches on when somebody presses the button and off again once the hold runs out, so a press can run a trigger like any other detection. Tick **Doorbell button** when you add the doorbell, or choose **Doorbell button pressed** in an existing device's settings. The button reports itself as an unanswered call, and at least the Amcrest AD110 sends that without listing it among the events it offers, so the plugin also goes by the doorbell's model name. An ordinary camera given a doorbell device says it is not a doorbell.
