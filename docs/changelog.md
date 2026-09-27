@@ -7,6 +7,12 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.19 — 27 September 2026
+
+**Settings take effect when you click Save.** Changing the hold, the camera username or the camera password in **Configure** used to do nothing until the plugin was reloaded. Now a new hold reaches every device straight away, apart from any device with its own hold, which keeps it. A change to a device's own hold, in that device's settings, also works as soon as you click Save. A new username or password reconnects every camera with it and checks each device again, so a camera that turned the old login away comes right without a reload. The shared `IndigoSecrets.py` file still needs a reload after a change, because the plugin reads it only when it starts.
+
+**A template for the shared file.** The plugin now comes with `IndigoSecrets_example.py`, holding the two lines it reads with empty values, ready to copy and fill in. The Settings page says where to find it.
+
 ## 1.18 — 27 September 2026
 
 **Vehicle devices now switch on.** On a camera with both a Person and a Vehicle device, the plugin opened the camera's connection when the first device started and asked only for that device's detection. The second device joined the same connection without its detection being added, so it never switched on. On the house this was written for, the Drive camera's Person device switched over a thousand times in September and its Vehicle device not once. The plugin now reopens the connection whenever a device needs a detection it is not asking for, so every device on a camera works, and a device added later works without a restart. Show Plugin Info now says how many cameras are in use, in place of an old line about the plugin's early stages.

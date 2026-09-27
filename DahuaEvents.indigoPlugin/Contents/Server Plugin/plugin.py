@@ -16,9 +16,12 @@
 #              Amcrest video doorbells.
 #              1.18 fixes a camera's second device never switching on: a running
 #              stream is replaced when it does not ask for every device's code.
+#              1.19 applies a new hold, username or password from Configure, and a
+#              device's own hold override, on Save, and ships
+#              IndigoSecrets_example.py.
 # Author:      CliveS & Claude Opus 5.5
 # Date:        27-09-2026 BST
-# Version:     1.18
+# Version:     1.19
 try:
     import indigo
 except ImportError:
@@ -62,7 +65,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.18"
+PLUGIN_VERSION = "1.19"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -274,13 +277,71 @@ class Plugin(indigo.PluginBase):
                               f"they are daemon threads and will not hold anything up")
 
     def closedPrefsConfigUi(self, valuesDict, userCancelled):
-        """Mirror the startup guards, or a re-save leaves the plugin on stale values."""
+        """Mirror the startup guards, then put the new values to work at once.
+
+        Until 1.19 this only updated the attributes. Every device's HoldTimer kept
+        the hold it was built with, and every camera's worker kept the username and
+        password it was started with, so a change made in Configure did nothing
+        until the plugin restarted.
+        """
         if userCancelled:
             return
+        old_creds = (self.cam_user, self.cam_pass)
+        old_hold  = self.hold_seconds
         self.cam_user = DAHUA_USER or valuesDict.get("dahuaUser", "")
         self.cam_pass = DAHUA_PASS or valuesDict.get("dahuaPass", "")
         self.hold_seconds = self._hold_from_prefs(valuesDict)
         self.log_activity = self._log_activity_from_prefs(valuesDict)
+
+        if self.hold_seconds != old_hold:
+            self._apply_hold_to_timers()
+        if (self.cam_user, self.cam_pass) != old_creds:
+            self._restart_workers_with_new_credentials()
+
+    def _apply_hold_to_timers(self):
+        """Give every running device the hold it should now have.
+
+        _hold_for() is the same rule deviceStartComm uses, so a device with its own
+        override keeps it and every other device takes the new plugin default. A
+        hold already counting down finishes on the old value; the next one uses the
+        new.
+        """
+        changed = 0
+        for dev_id, timer in list(self._timers.items()):
+            dev = indigo.devices.get(dev_id)
+            if dev is None:
+                continue
+            hold = self._hold_for(dev)
+            if timer.hold_seconds != hold:
+                timer.hold_seconds = hold
+                changed += 1
+        if changed:
+            self.logger.info(f"Detection hold is now {self.hold_seconds}s on "
+                             f"{changed} device(s)")
+
+    def _restart_workers_with_new_credentials(self):
+        """Reconnect every camera with the new username and password.
+
+        A worker is handed its credentials when it starts, so the only way to change
+        them is a new worker. Stops go through _stop_all_workers, which signals all
+        of them first and then waits on one shared budget, because this runs inside
+        a dialog callback and Indigo gives those about 30 seconds.
+
+        Each device is then settled again, since a verdict reached with the old
+        credentials may have been "could not tell" when the camera simply refused
+        the login.
+        """
+        addresses = list(self._by_camera)
+        if not addresses:
+            return
+        self._stop_all_workers()
+        for address in addresses:
+            self._ensure_worker(address)
+            for klass, dev_id in list(self._by_camera.get(address, {}).items()):
+                threading.Thread(target=self._settle_device, args=(dev_id, address, klass),
+                                 daemon=True, name=f"DahuaVerdict-{dev_id}").start()
+        self.logger.info(f"Camera username or password changed, reconnecting "
+                         f"{len(addresses)} camera(s)")
 
     # --------------------------------------------------------
     # Device lifecycle — stage 3
@@ -382,17 +443,43 @@ class Plugin(indigo.PluginBase):
     def _hold_for(self, dev):
         """Per-device override, falling back to the plugin default. Guarded: a
         blank or non-numeric override must not stop the device starting."""
-        raw = dev.pluginProps.get("holdOverride", "")
+        return self._hold_from_override(dev.pluginProps.get("holdOverride", ""), dev.name)
+
+    def _hold_from_override(self, raw, name):
+        """The rule behind _hold_for(), on a raw override value. Shared with
+        closedDeviceConfigUi, which has the dialog's values in hand."""
         if str(raw).strip() == "":
             return self.hold_seconds
         try:
             value = int(raw)
         except (TypeError, ValueError):
             self.logger.warning(
-                f"{dev.name}: hold override {raw!r} is not a number — "
+                f"{name}: hold override {raw!r} is not a number — "
                 f"using the plugin default of {self.hold_seconds}s")
             return self.hold_seconds
         return max(0, value)
+
+    def closedDeviceConfigUi(self, valuesDict, userCancelled, typeId, devId):
+        """Apply a device's new Hold override on Save.
+
+        didDeviceCommPropertyChange deliberately does not restart a device for a
+        hold change, so until 1.19 nothing else picked the new value up and it only
+        took effect at the next plugin restart. The value is read from the dialog
+        rather than the device, so it does not matter whether Indigo has stored the
+        new props yet. A device that is not running has no timer; it gets the right
+        hold from deviceStartComm when it starts.
+        """
+        if userCancelled:
+            return
+        timer = self._timers.get(devId)
+        if timer is None:
+            return
+        dev = indigo.devices.get(devId)
+        name = dev.name if dev is not None else str(devId)
+        hold = self._hold_from_override(valuesDict.get("holdOverride", ""), name)
+        if timer.hold_seconds != hold:
+            timer.hold_seconds = hold
+            self.logger.info(f"{name}: detection hold is now {hold}s")
 
     def _verdict_for(self, address, klass):
         """Ask the right question for this class.

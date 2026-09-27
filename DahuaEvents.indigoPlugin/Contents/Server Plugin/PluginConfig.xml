@@ -2,7 +2,7 @@
 <PluginConfig>
 
     <Field id="credsLabel" type="label">
-        <Label>Camera credentials are read from IndigoSecrets.py first (DAHUA_USER and DAHUA_PASS). The fields below are a fallback for installations without that file — anything set there wins over what you type here.</Label>
+        <Label>Camera credentials are read from IndigoSecrets.py first (DAHUA_USER and DAHUA_PASS). The plugin carries IndigoSecrets_example.py as a template for that file, inside the bundle at Contents/Server Plugin. The fields below are a fallback for installations without that file — anything set there wins over what you type here. A change to the hold, username or password takes effect as soon as you click Save.</Label>
     </Field>
 
     <Field id="dahuaUser" type="textfield">

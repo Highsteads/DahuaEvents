@@ -9,7 +9,7 @@ Each section starts with what you see, then what it means and what to do.
 
 ## The Event Log says "No camera credentials yet"
 
-The plugin has no camera username and password. Fill them in under **Plugins → DahuaEvents → Configure**, or in the shared file the [Settings](settings.md) page describes, then choose **Plugins → DahuaEvents → Reload**.
+The plugin has no camera username and password. Fill them in under **Plugins → DahuaEvents → Configure** and click **Save**, and the plugin connects to the cameras straight away. If you put them in the shared file the [Settings](settings.md) page describes instead, choose **Plugins → DahuaEvents → Reload** afterwards, because the plugin reads that file only when it starts.
 
 ## A device shows "no rule drawn on the camera"
 
@@ -64,7 +64,9 @@ These devices report what the camera saw, so they cannot be switched by hand, an
 
 ## A change to the hold made no difference
 
-The plugin takes up a new hold when it restarts. Choose **Plugins → DahuaEvents → Reload**.
+A new **Detection hold** in **Plugins → DahuaEvents → Configure** takes effect when you click **Save**, but only on devices without their own **Hold override**. A device with its own keeps it, so clear the override if you want that device to use the plugin's hold.
+
+A change to a device's own **Hold override** takes effect when you click **Save** in that device's settings. A hold already counting down finishes on the old value, so the new one shows from the next detection.
 
 ## Probe a Camera says UNSUPPORTED, but the device works
 
