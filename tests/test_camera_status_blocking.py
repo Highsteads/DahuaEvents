@@ -129,6 +129,20 @@ class TestUnblockedBehaviourIsUnchanged(unittest.TestCase):
                          "a genuine connection fault must still reach a capable device")
 
 
+class TestAStoppedWorkerWritesNothing(unittest.TestCase):
+    """Since 1.18 a camera's worker is replaced while the plugin runs, and the old
+    one reports "stopped" as it goes. That is not a streamState value, so writing
+    it logged "invalid enumeration value" once per device (seen live 27-09-2026)."""
+
+    def test_a_stopped_worker_leaves_the_device_alone(self):
+        p = make_plugin()
+        dev = FakeDevice(1)
+        _settle(p, dev, "192.168.1.201", "person", dahua_probe.CAPABLE)
+        p._statuses.put(("192.168.1.201", "stopped", ""))
+        p._drain_statuses()
+        self.assertEqual(dev.states["streamState"], "connected")
+
+
 class TestOnlyConnectedIsSuppressed(unittest.TestCase):
     """The fix targets exactly one transition — a blocked device must still
     hear that its camera has gone properly unreachable, because that IS new

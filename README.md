@@ -2,7 +2,7 @@
 
 **Turn a Dahua camera's own person and vehicle detection, and a video doorbell's button, into Indigo sensors.**
 
-**Version:** 1.19 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
+**Version:** 1.19.1 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
 
 **[Read the full guide](https://highsteads.github.io/DahuaEvents/)** — setting up, what everything means, and what to do when something goes wrong.
 
@@ -46,6 +46,8 @@ The plugin uses one camera username and password for every camera.
 The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each step, explains what to switch on in the camera, and covers what to do if something does not work.
 
 ## What's new
+
+**v1.19.1** — Since 1.18 the plugin swaps a camera's connection while it runs, and the old connection's last word was being written to every device on that camera, which Indigo refused and logged as an error. It is now ignored.
 
 **v1.19** — A new hold, camera username or password typed into **Configure** now takes effect when you click **Save**, with no reload, and so does a device's own hold. The plugin also comes with a template for the shared `IndigoSecrets.py` file.
 

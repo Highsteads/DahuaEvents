@@ -21,7 +21,9 @@
 #              IndigoSecrets_example.py.
 # Author:      CliveS & Claude Opus 5.5
 # Date:        27-09-2026 BST
-# Version:     1.19
+#              1.19.1 stops a replaced stream's 'stopped' status reaching
+#              streamState, which is not one of its values.
+# Version:     1.19.1
 try:
     import indigo
 except ImportError:
@@ -46,6 +48,7 @@ except ImportError:
 import dahua_probe
 from dahua_stream import HoldTimer, drain
 from dahua_worker import CameraWorker
+from dahua_worker import STOPPED as WORKER_STOPPED
 
 # Camera credentials: IndigoSecrets.py first, PluginConfig as the fallback.
 # Per-key try/except so a missing single key does not blank the others.
@@ -65,7 +68,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.19"
+PLUGIN_VERSION = "1.19.1"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -617,6 +620,13 @@ class Plugin(indigo.PluginBase):
     def _drain_statuses(self):
         statuses, overflowed = drain(self._statuses)
         for address, status, detail in statuses:
+            if status == WORKER_STOPPED:
+                # A worker we stopped on purpose. Since 1.18 that happens while
+                # the plugin runs (a camera's stream is replaced when a second
+                # device needs another event code), and "stopped" is not one of
+                # the streamState values, so writing it logged an error per
+                # device. The replacement worker reports its own status.
+                continue
             for dev_id in self._by_camera.get(address, {}).values():
                 dev = indigo.devices.get(dev_id)
                 if dev is None:

@@ -7,6 +7,10 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.19.1 — 27 September 2026
+
+Since 1.18 the plugin swaps a camera's connection while it runs, when a second device on the camera needs something the first did not. The old connection's last word, "stopped", was being written to every device on that camera, and Indigo refused it and logged an error for each one. It is now ignored, and the new connection reports for itself.
+
 ## 1.19 — 27 September 2026
 
 **Settings take effect when you click Save.** Changing the hold, the camera username or the camera password in **Configure** used to do nothing until the plugin was reloaded. Now a new hold reaches every device straight away, apart from any device with its own hold, which keeps it. A change to a device's own hold, in that device's settings, also works as soon as you click Save. A new username or password reconnects every camera with it and checks each device again, so a camera that turned the old login away comes right without a reload. The shared `IndigoSecrets.py` file still needs a reload after a change, because the plugin reads it only when it starts.
