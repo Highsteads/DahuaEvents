@@ -51,8 +51,11 @@ class FakeDevice:
         self.states = {}
         self.errorState = ""
 
-    def updateStateOnServer(self, key, value):
+    def updateStateOnServer(self, key, value, clearErrorState=True):
+        # Indigo's default wipes the error state on ANY state write.
         self.states[key] = value
+        if clearErrorState:
+            self.errorState = ""
 
     def setErrorStateOnServer(self, value):
         self.errorState = value
@@ -144,9 +147,15 @@ class TestAStoppedWorkerWritesNothing(unittest.TestCase):
 
 
 class TestOnlyConnectedIsSuppressed(unittest.TestCase):
-    """The fix targets exactly one transition — a blocked device must still
-    hear that its camera has gone properly unreachable, because that IS new
-    information; only the misleadingly reassuring "connected" is withheld."""
+    """A blocked device must still hear that its camera has gone properly
+    unreachable, because that IS new information; only the misleadingly
+    reassuring "connected" is never shown.
+
+    Until 1.20 "connected" was simply skipped for a blocked device, so one that
+    had heard "reconnecting" during a blip stayed on "reconnecting" after the
+    stream came back, until somebody ran Send Status Request. Since 1.20 the
+    device's own settled verdict is written back instead, so it reads
+    "reconnecting" only while the stream is actually down."""
 
     def test_a_blocked_device_still_receives_reconnecting(self):
         p = make_plugin()
@@ -168,6 +177,35 @@ class TestOnlyConnectedIsSuppressed(unittest.TestCase):
         p._drain_statuses()
         self.assertEqual(dev.states["streamState"], "unsupported")
         self.assertEqual(dev.errorState, "camera stopped advertising events")
+
+
+class TestTheVerdictComesBackWithTheStream(unittest.TestCase):
+    """1.20: "connected" reaching a blocked device restores its own verdict and
+    error, and still never shows "connected"."""
+
+    def test_no_rule_returns_after_a_reconnect(self):
+        p = make_plugin()
+        dev = FakeDevice(1)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.NO_RULE)
+        p._statuses.put(("192.168.1.200", "reconnecting", "no heartbeat"))
+        p._drain_statuses()
+        self.assertEqual(dev.states["streamState"], "reconnecting")
+
+        p._statuses.put(("192.168.1.200", "connected", ""))
+        p._drain_statuses()
+        self.assertEqual(dev.states["streamState"], "noRule",
+                         "a blocked device stayed on reconnecting after the stream came back")
+        self.assertEqual(dev.errorState, "no rule drawn on the camera")
+
+    def test_disabled_error_replaces_a_worker_error_once_connected(self):
+        p = make_plugin()
+        dev = FakeDevice(1)
+        _settle(p, dev, "192.168.1.200", "crossline", dahua_probe.DISABLED)
+        p._statuses.put(("192.168.1.200", "unsupported", "camera stopped advertising events"))
+        p._statuses.put(("192.168.1.200", "connected", ""))
+        p._drain_statuses()
+        self.assertEqual(dev.states["streamState"], "disabled")
+        self.assertEqual(dev.errorState, "switched off at the camera")
 
 
 class TestReSettleUnblocks(unittest.TestCase):

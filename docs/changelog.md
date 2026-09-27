@@ -7,6 +7,12 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.20 — 27 September 2026
+
+**A red message now stays until the problem is fixed.** When a detection cannot work, for instance because no tripwire is drawn on the camera, the device shows a short red message saying why. Indigo wipes that message whenever a plugin updates anything else on the device, and this plugin updates its devices every night at midnight, when the count of detections goes back to 0, and whenever the camera's connection drops. So the message quietly disappeared and the device looked healthy, including to any plugin that watches for devices in trouble. Now the message only goes when the plugin sees the problem is gone: the camera checks out when you choose **Send Status Request**, the connection comes back for a device that can work, or the device restarts.
+
+**Reconnecting only while the camera is really away.** A device that cannot work showed **Reconnecting** when the camera's connection dropped, and then stayed on it after the connection came back, until you chose **Send Status Request**. It now goes back to what it said before, such as **No rule drawn on the camera**, as soon as the camera is back.
+
 ## 1.19.1 — 27 September 2026
 
 Since 1.18 the plugin swaps a camera's connection while it runs, when a second device on the camera needs something the first did not. The old connection's last word, "stopped", was being written to every device on that camera, and Indigo refused it and logged an error for each one. It is now ignored, and the new connection reports for itself.

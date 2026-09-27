@@ -23,7 +23,12 @@
 # Date:        27-09-2026 BST
 #              1.19.1 stops a replaced stream's 'stopped' status reaching
 #              streamState, which is not one of its values.
-# Version:     1.19.1
+#              1.20 keeps a device's error state through routine state writes
+#              (clearErrorState=False), so the midnight counter reset or a
+#              stream status no longer wipes "no rule drawn on the camera",
+#              and a blocked device returns to its own verdict when the stream
+#              comes back, rather than staying on "reconnecting".
+# Version:     1.20
 try:
     import indigo
 except ImportError:
@@ -68,7 +73,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.19.1"
+PLUGIN_VERSION = "1.20"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -109,6 +114,14 @@ CLASS_LABELS = {
     "doorbell":    "Pressed",          # so a camera named Doorbell gives "Doorbell Pressed"
 }
 IVS_CLASSES = ("crossline", "crossregion")
+
+# A verdict that blocks a device -> the streamState and error it shows. Held per
+# device in Plugin._blocked, so the stream coming back restores it.
+BLOCKED_VERDICTS = {
+    dahua_probe.NO_RULE:     ("noRule",      "no rule drawn on the camera"),
+    dahua_probe.DISABLED:    ("disabled",    "switched off at the camera"),
+    dahua_probe.UNSUPPORTED: ("unsupported", "camera cannot emit this detection"),
+}
 DEFAULT_CLASSES = ("person", "vehicle")
 
 DEVICE_TYPE = "dahuaDetection"
@@ -195,8 +208,10 @@ class Plugin(indigo.PluginBase):
         self._stops    = {}                  # address -> threading.Event
         self._timers   = {}                  # device id -> HoldTimer
         self._by_camera = {}                 # address -> {class -> device id}
-        self._blocked  = {}                  # device id -> True while camera-side config
-                                              # (no rule / disabled / unsupported) blocks it
+        self._blocked  = {}                  # device id -> (streamState, error) of the
+                                              # settled verdict while camera-side config
+                                              # (no rule / disabled / unsupported) blocks
+                                              # it, None when it does not
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -369,7 +384,12 @@ class Plugin(indigo.PluginBase):
 
         self._timers[dev.id] = HoldTimer(self._hold_for(dev))
         self._by_camera.setdefault(address, {})[klass] = dev.id
-        dev.updateStateOnServer("onOffState", False)
+        dev.updateStateOnServer("onOffState", False, clearErrorState=False)
+        # A (re)start begins from a clean slate: _settle_device below decides the
+        # device's fault afresh. This is the one deliberate clear outside a
+        # verdict — every state write in this file passes clearErrorState=False,
+        # because Indigo's default wipes the error on ANY write (see _write_on_off).
+        dev.setErrorStateOnServer("")
 
         # Per-device verdict, so one class failing does not condemn the others on
         # the same camera. Threaded: this is device startup, not a UI callback, but
@@ -393,25 +413,27 @@ class Plugin(indigo.PluginBase):
             # now, so _drain_statuses must not let a worker-level "connected"
             # (the stream merely being open) paint a blocked device healthy —
             # see the comment there.
-            self._blocked[dev_id] = verdict in (
-                dahua_probe.NO_RULE, dahua_probe.DISABLED, dahua_probe.UNSUPPORTED)
+            # The pair is remembered so _drain_statuses can put it back when the
+            # stream returns (1.20), rather than leave the device on "reconnecting".
+            blocked = BLOCKED_VERDICTS.get(verdict)
+            self._blocked[dev_id] = blocked
             if verdict == dahua_probe.CAPABLE:
-                dev.updateStateOnServer("streamState", "connected")
+                dev.updateStateOnServer("streamState", "connected", clearErrorState=False)
                 dev.setErrorStateOnServer("")
             elif verdict == dahua_probe.NO_RULE:
-                dev.updateStateOnServer("streamState", "noRule")
-                dev.setErrorStateOnServer("no rule drawn on the camera")
+                dev.updateStateOnServer("streamState", blocked[0], clearErrorState=False)
+                dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
             elif verdict == dahua_probe.DISABLED:
-                dev.updateStateOnServer("streamState", "disabled")
-                dev.setErrorStateOnServer("switched off at the camera")
+                dev.updateStateOnServer("streamState", blocked[0], clearErrorState=False)
+                dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
             elif verdict == dahua_probe.UNSUPPORTED:
-                dev.updateStateOnServer("streamState", "unsupported")
-                dev.setErrorStateOnServer("camera cannot emit this detection")
+                dev.updateStateOnServer("streamState", blocked[0], clearErrorState=False)
+                dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
             else:
-                dev.updateStateOnServer("streamState", "reconnecting")
+                dev.updateStateOnServer("streamState", "reconnecting", clearErrorState=False)
                 self.logger.error(f"{dev.name}: {reason}")
         except Exception:
             self.logger.exception(f"could not settle device {dev_id}")
@@ -505,7 +527,7 @@ class Plugin(indigo.PluginBase):
 
     def _mark_error(self, dev, reason):
         try:
-            dev.updateStateOnServer("streamState", "unsupported")
+            dev.updateStateOnServer("streamState", "unsupported", clearErrorState=False)
             dev.setErrorStateOnServer(reason)
         except Exception:
             self.logger.exception(f"could not mark {dev.name} in error")
@@ -631,7 +653,8 @@ class Plugin(indigo.PluginBase):
                 dev = indigo.devices.get(dev_id)
                 if dev is None:
                     continue
-                if status == "connected" and self._blocked.get(dev_id):
+                blocked = self._blocked.get(dev_id)
+                if status == "connected" and blocked:
                     # This device's own settled verdict — no rule drawn,
                     # switched off, or unsupported — is a camera-CONFIG fact.
                     # The shared per-camera worker reconnecting says only that
@@ -639,10 +662,16 @@ class Plugin(indigo.PluginBase):
                     # and has no bearing on it. Painting the device "connected"
                     # here is exactly the failure this plugin exists to catch:
                     # a camera that looks perfectly healthy and will never
-                    # fire. A fresh Send Status Request (or a device restart)
-                    # is what re-settles this — not the stream reconnecting.
+                    # fire. So the verdict itself goes back (1.20): until then
+                    # the connected status was skipped, and a device that had
+                    # heard "reconnecting" during a blip stayed on it after the
+                    # stream came back. A fresh Send Status Request (or a device
+                    # restart) is what re-settles the verdict, not the stream.
+                    dev.updateStateOnServer("streamState", blocked[0],
+                                            clearErrorState=False)
+                    dev.setErrorStateOnServer(blocked[1])
                     continue
-                dev.updateStateOnServer("streamState", status)
+                dev.updateStateOnServer("streamState", status, clearErrorState=False)
                 if status == "unsupported":
                     dev.setErrorStateOnServer(
                     dahua_probe.ascii_only(detail) or "camera cannot emit smart detections")
@@ -703,7 +732,8 @@ class Plugin(indigo.PluginBase):
         changed = timer.start(now) if event.action == "Start" else timer.stop(now)
         if event.action == "Start":
             dev.updateStateOnServer("lastDetection",
-                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    clearErrorState=False)
             self._bump_count(dev)
         if changed:
             self._write_on_off(dev, timer.is_on)
@@ -733,7 +763,7 @@ class Plugin(indigo.PluginBase):
             if dev is None:
                 continue
             if dev.states.get("lastDetectionDay", "") != today:
-                dev.updateStateOnServer("detectionsToday", 0)
+                dev.updateStateOnServer("detectionsToday", 0, clearErrorState=False)
 
     def _write_on_off(self, dev, on):
         """Write the device state, and narrate it to the plugin's OWN log.
@@ -751,10 +781,17 @@ class Plugin(indigo.PluginBase):
         shared log by default, and anyone who wants the running commentary back
         ticks "Log detections to the Indigo event log" in Configure.
 
+        Every state write in this plugin passes clearErrorState=False (1.20).
+        Indigo's default CLEARS the device's error state on any write, so the
+        midnight detectionsToday reset, a detection, or a stream status used to
+        wipe "no rule drawn on the camera" and its like, and anything reading
+        errorState (Device Health Monitor) saw a healthy device. An error now
+        changes only where the plugin decides it: setErrorStateOnServer().
+
         The message is identical either way, so the plugin's own log reads the same
         whichever way the checkbox is set.
         """
-        dev.updateStateOnServer("onOffState", on)
+        dev.updateStateOnServer("onOffState", on, clearErrorState=False)
         line = f"{dev.name}: {'DETECTED' if on else 'clear'}"
         if self.log_activity:
             self.logger.info(line)
@@ -770,8 +807,8 @@ class Plugin(indigo.PluginBase):
         count = dev.states.get("detectionsToday", 0) or 0
         if stamp != today:
             count = 0
-        dev.updateStateOnServer("detectionsToday", count + 1)
-        dev.updateStateOnServer("lastDetectionDay", today)
+        dev.updateStateOnServer("detectionsToday", count + 1, clearErrorState=False)
+        dev.updateStateOnServer("lastDetectionDay", today, clearErrorState=False)
 
     # --------------------------------------------------------
     # Device factory

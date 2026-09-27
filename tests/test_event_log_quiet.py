@@ -158,7 +158,7 @@ class FakeDevice:
         self.name = name
         self.states = {}
 
-    def updateStateOnServer(self, key, value):
+    def updateStateOnServer(self, key, value, clearErrorState=True):
         self.states[key] = value
 
 

@@ -46,7 +46,7 @@ When a detection cannot work, the device also shows a short red message in the d
 | **camera cannot emit this detection** | This camera cannot do it. For people and vehicles on an older camera, try a tripwire or intrusion zone instead. |
 | **no camera address configured** | Open the device's settings and fill in **Camera address**. |
 
-Once you have changed the camera, select the device and choose **Send Status Request**, and the plugin checks again. The [Your cameras](cameras.md) page explains what each camera needs.
+The message stays until the plugin sees the problem is fixed, so it does not disappear overnight or when the camera's connection drops. Once you have changed the camera, select the device and choose **Send Status Request**, and the plugin checks again. The [Your cameras](cameras.md) page explains what each camera needs.
 
 ## The devices are read-only
 
