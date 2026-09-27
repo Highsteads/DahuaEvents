@@ -1,241 +1,57 @@
-# DahuaEvents
+# Dahua Events for Indigo
 
-**Version:** 1.17
+**Turn a Dahua camera's own person and vehicle detection, and a video doorbell's button, into Indigo sensors.**
 
-Turns a Dahua camera's own onboard smart-motion detection into native Indigo devices, so
-person and vehicle detections can drive triggers, notifications and control pages.
+**Version:** 1.17 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
 
-The camera does the thinking. This plugin listens.
+**[Read the full guide](https://highsteads.github.io/DahuaEvents/)** — setting up, what everything means, and what to do when something goes wrong.
 
-## Why
+---
 
-Most Dahua cameras made in the last few years classify what they see — a person, a vehicle —
-on the camera itself, using hardware you have already paid for. Nothing else is needed: no
-video analytics server, no subscription, no AI accelerator, and no video leaving your network.
-The catch is that nothing in Indigo listens to those events. This plugin is the missing piece.
+## What it does
 
-You get one Indigo sensor per camera per class — `Drive Person`, `Drive Vehicle` — that turns
-on when the camera sees one, and off again shortly after it stops.
+Most Dahua cameras from the last few years work out for themselves whether they are looking at a person or a vehicle. This plugin lets [Indigo](https://www.indigodomo.com) hear those detections straight from the camera, over your home network, so there is no video analysis server, no subscription, nothing studying pictures on the Indigo Mac, and no video leaving the house.
 
-## Requirements
+- **Makes a sensor for each detection,** named after the camera, such as `Drive Person` and `Drive Vehicle`, which switches on when the camera sees one. Use it in triggers, notifications and control pages like any other device.
+- **Runs a trigger once per visit.** A camera reports many short detections as someone moves about, so the sensor stays on until 20 seconds after the last one. You can change that for every camera or for one.
+- **Works with older cameras too,** through a tripwire or intrusion zone drawn in the camera's own settings.
+- **Tells you when a doorbell is pressed,** on a Dahua or Amcrest video doorbell.
+- **Asks the camera what it can do** before you add it, and ticks the detections that will work.
+- **Says plainly when a detection cannot work,** and why — the firmware cannot do it, it is switched off in the camera, or no tripwire or zone is drawn.
+- **Keeps the Event Log quiet.** Each detection goes to the plugin's own log file unless you ask for it in the Event Log as well.
 
-- A Dahua camera whose firmware supports Smart Motion Detection. Roughly speaking, models from
-  2022 onward; older cameras advertise the older IVS rules instead and are not yet supported.
-- Smart Motion Detection switched on in the camera, along with ordinary motion detection —
-  SMD filters motion events rather than replacing them, so both are needed.
-- A camera user with access to the event and configuration API.
+## What it works with
 
-Use **Plugins -> DahuaEvents -> Probe a Camera...** to find out where a camera stands. It says
-plainly whether the camera can do smart detection, whether it is switched on, and if not, why
-not.
-
-## Credentials
-
-Read from `IndigoSecrets.py` first, then from the plugin's own configuration:
-
-| Key | Meaning |
+| In Indigo | Your camera |
 |---|---|
-| `DAHUA_USER` | camera username |
-| `DAHUA_PASS` | camera password |
+| **Person** and **Vehicle** | A Dahua camera with Smart Motion Detection, which most have from about 2022 onward |
+| **Tripwire** and **Intrusion** | An older Dahua camera, with a tripwire or intrusion zone drawn in its own settings |
+| **Pressed** | A Dahua or Amcrest video doorbell. I use it on an Amcrest AD110 |
 
-If you do not use `IndigoSecrets.py`, leave it out entirely and fill the same two fields in
-**Plugins -> DahuaEvents -> Configure**. Anything found in `IndigoSecrets.py` wins.
+The plugin uses one camera username and password for every camera.
 
-## Installation
+## Installing
 
-1. Go to the [Releases](https://github.com/Highsteads/DahuaEvents/releases) page and download
-   `DahuaEvents.indigoPlugin.zip`.
-2. Unzip it — you will get `DahuaEvents.indigoPlugin`.
-3. Double-click `DahuaEvents.indigoPlugin` and Indigo will install it.
+1. Go to the [Releases page](https://github.com/Highsteads/DahuaEvents/releases/latest) and download `DahuaEvents.indigoPlugin.zip`
+2. Unzip the downloaded file — you will get `DahuaEvents.indigoPlugin`
+3. Double-click `DahuaEvents.indigoPlugin` — Indigo will install it automatically
 
 ## Setting it up
 
-1. Install the plugin and, if you do not use `IndigoSecrets.py`, put the camera username and
-   password into **Plugins -> DahuaEvents -> Configure**.
-2. **Plugins -> DahuaEvents -> Dahua Camera...** Give the camera a name and its address, then
-   press **Check This Camera**. It reports what that camera can do and ticks the detections it
-   supports. Close the dialog and you get a device per ticked detection, named
-   `<camera> Person`, `<camera> Vehicle` and so on.
-3. Repeat for each camera.
+1. Open **Plugins → DahuaEvents → Configure**, fill in the **Camera username** and **Camera password**, and click **Save**.
+2. Create a **New Device** with its **Type** set to **DahuaEvents**. In the camera dialog, give the camera a name such as `Drive` and type in its network address — the four numbers, such as `192.168.1.64`, that its own web page or your router shows.
+3. Click **Check This Camera**, which ticks the detections that will work, then click **Close**. You get one device for each ticked detection.
+4. Walk in front of the camera, and the **Person** device should switch on.
 
-Use **Probe a Camera...** first if you are unsure whether a camera can do this. It reports one of
-four answers, and says why:
+The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each step, explains what to switch on in the camera, and covers what to do if something does not work.
 
-| | Meaning |
-|---|---|
-| capable | advertises human and vehicle detection, and it is switched on |
-| disabled | it can, but Smart Motion Detection or ordinary motion detection is off at the camera |
-| unsupported | the firmware cannot emit these events, whatever the settings say |
-| no rule | (tripwire and intrusion only) the firmware can, but no rule is drawn on the camera |
-| unreachable | no answer — wrong address, wrong credentials, or the camera is down |
+## What's new
 
-A camera that cannot do it still gets devices. They sit in an error state explaining why, so
-nothing disappears silently, and if you update the firmware or replace the camera they simply
-start working.
+**v1.17** — Doorbells. A Dahua or Amcrest video doorbell can have a **Pressed** device, which switches on when somebody presses the button, so a press can run a trigger like any other detection. Tick **Doorbell button** when you add the doorbell.
 
-## Older cameras — tripwire and intrusion
+**v1.16** — The plugin carries a note of where its code lives on GitHub, the same way other Indigo plugins do. Nothing else changed.
 
-Cameras from before roughly 2022 have no Smart Motion Detection and will report **unsupported**
-for people and vehicles. Most of them do offer the older IVS rules instead, and those can be
-filtered to people or vehicles, so the camera is not necessarily a lost cause.
-
-The difference is that IVS reports nothing until you tell it where to look. In the camera's own
-web interface, under Smart Plan or IVS, draw a **tripwire** (a line) or an **intrusion zone** (an
-area), set it to trigger on Human or Vehicle, and enable it. Then tick Tripwire or Intrusion when
-you add the camera here.
-
-The plugin checks whether a rule is actually drawn, not merely whether the firmware supports the
-idea. A camera with no rule says so — it does not sit there looking healthy and never firing.
-
-## How it behaves
-
-The camera reports the start and end of a detection, often many times as somebody moves through
-frame. The plugin turns that into one clean detection: the device switches on at the first
-report and stays on until the hold expires after the last one. Twenty seconds by default,
-adjustable globally and per camera.
-
-Each camera gets one connection, shared by its two devices. If it drops, the plugin reconnects
-with a backoff that caps at a minute. A camera whose firmware cannot emit these events is not
-retried at all — it is marked and left alone, because it will never start working by being
-asked more often.
-
-## A note on grouped devices
-
-The two devices for a camera are created as a group. Deleting one in Indigo will offer to delete
-the whole group, and recreating them gives them **new device IDs** — so any trigger, control page
-or script pointing at the old ones will quietly stop working. Rename them freely; just be careful
-about deleting.
-
-## Changelog
-
-### 1.17
-
-**Doorbells.** A Dahua or Amcrest video doorbell can now have a **Doorbell Pressed** device, which switches on when somebody presses the button and off again once the hold runs out, so a press can drive a trigger like any other detection. Tick **Doorbell button** when you add the doorbell, or choose **Doorbell button pressed** in an existing device's settings. The button reports itself as an unanswered call, and at least the Amcrest AD110 sends that without listing it among the events it offers, so the plugin decides from the model instead. An ordinary camera given a doorbell device says it is not a doorbell rather than sitting there looking healthy and never firing.
-
-### 1.16
-
-**The bundle now carries the standard GitHub record.** Indigo plugins can carry a small note inside the bundle saying where their source lives on GitHub, spelt the way the Indigo Domotics and community plugins spell it. This one now has it, pointing at this repository. Nothing else changed.
-
-### 1.15
-- **Switching a rule off at the camera showed the wrong reason.** The plugin already
-  worked out, correctly, that a Tripwire or Intrusion rule existed and had been
-  switched off — but it then told the device the generic "no rule drawn on the
-  camera", instead of the more useful "switched off at the camera" it had already
-  figured out. Found by switching a real rule off on a test camera and watching the
-  message stay the same as the "never drawn at all" case. Fixed so the device now
-  shows which of the two it actually is.
-
-### 1.14
-- **A tripwire or intrusion zone could be drawn, switched on, and never be seen.** The
-  camera reports which kind of rule each one is in two different places depending on its
-  firmware — an older generation puts it plainly, a newer one puts "Normal" there and the
-  real answer somewhere else. This plugin only ever looked at the first place, so on a
-  camera using the second, a rule that was genuinely drawn and enabled looked exactly like
-  no rule at all, forever. Found by drawing a real tripwire and a real intrusion zone on a
-  test camera and watching the plugin still say neither existed. Fixed to check both places
-  a camera might put the answer.
-
-### 1.13
-- **A camera that will never fire could look perfectly healthy.** Two devices can share one
-  camera — Tripwire and Intrusion on the same box, say — and the plugin keeps one shared
-  connection to it. When that connection reconnects, it used to tell every device on the
-  camera "connected", even one that had already worked out it could never detect anything
-  because no rule is drawn, or the class is switched off, or the firmware doesn't support it.
-  So a device stuck for a real, fixable reason quietly stopped saying so the moment the
-  connection came back — found live onboarding a second camera. A device now keeps its own
-  verdict until a fresh check says otherwise; the shared connection can still tell it the
-  camera has gone properly unreachable, just not paper over the real reason it never worked.
-
-### 1.12
-- **Two bugs found onboarding a camera, both now fixed.** A camera name or hold value
-  containing an ampersand or a quote made device creation fail with "illegal character in
-  XML tag name or value" — 1.9 had already stripped non-ASCII text but let those five
-  printable characters straight through, so they hit the same wall. And a Tripwire or
-  Intrusion camera with no rule drawn reported it with the value `no rule`, which Indigo
-  quietly refused outright: a space in an enum value cannot form the per-value trigger
-  state Indigo builds underneath it, so the whole write was dropped rather than just shown
-  wrong. Fixed at the root — every runtime string now clears the five reserved characters
-  the same way it already clears non-ASCII ones, and the option is named `noRule`.
-
-### 1.11
-
-- **Detection narration moved to the plugin's own log.** About 47 lines a day of `Drive Person: DETECTED` and its clear were going into the shared Indigo event log. The device states change either way, so nothing is lost from dashboards or triggers, and a new tick box puts the narration back. Camera connection faults still reach the event log, and the test guarding them can now see a fault site it had been blind to.
-
-### 1.10
-- **A quiet camera no longer looks dead.** Each camera's own status was only ever reported once
-  — the moment its stream connected — so a camera that went hours with nothing to say (no
-  detection, no fault) never told Indigo it was still there. Nothing watching comm freshness
-  could tell that apart from a genuinely broken connection, and on a quiet night it cost three
-  unnecessary restarts and a page saying the plugin needed attention, for cameras that were
-  answering within a tenth of a second the whole time. The status is now repeated every five
-  minutes while the stream stays open and healthy, whether or not anything has happened. A
-  camera that really has gone quiet — a dropped heartbeat, a closed stream — is still caught
-  just as fast as before; this only stops a healthy silence being mistaken for one.
-
-### 1.9
-- **Fixes device creation failing in the camera dialog** with "illegal character in XML tag name
-  or value". The capability summary added in 1.8 used a non-ASCII separator, and Indigo refuses
-  runtime text containing one — naming neither the field nor the character. Everything the plugin
-  writes at runtime is now plain ASCII, and the summary is a display field that no longer travels
-  into device creation at all.
-
-### 1.8
-- **The camera dialog now has a Check This Camera button.** It asks the camera what it can do and
-  ticks the right boxes for you, instead of leaving you to pick, create devices and only then
-  discover which of them work.
-
-### 1.7
-- Sensor actions are handled. Sending on, off or a status request to one of these devices used
-  to be dropped by Indigo with an error and no explanation, because the plugin never implemented
-  the callback that declaring a sensor device obliges. A status request now re-checks the camera;
-  on and off say plainly that the device is read-only.
-- **Detections today** now resets at midnight rather than on the next detection, so a camera
-  that saw twelve yesterday no longer reads twelve all morning.
-
-### 1.6
-- **Support for older cameras via IVS rules** — tripwire (line crossed) and intrusion (zone
-  entered), both of which can be filtered to people or vehicles. These are the pre-SMD
-  generation's equivalent, so cameras that reported "unsupported" may still be useful.
-- IVS needs a line or zone drawn in the camera's own web interface first. The plugin checks for
-  one and says so plainly when it is missing or switched off, rather than sitting there looking
-  healthy and never firing.
-- The camera dialog now asks which detections you want, so you only get the devices you use.
-
-### 1.5
-- **Actually fixes the force-kill on restart that 1.4 only half-fixed.** The worker threads
-  blocked inside a socket read, and closing the connection from another thread waits for that
-  read rather than cancelling it — so shutting down waited out the socket timeout. Measured
-  against five cameras: **25.8 seconds before, 0.79 seconds after.**
-
-### 1.4
-- **Fixes the plugin having to be force-killed on upgrade or restart.** Indigo raises its stop
-  signal only from inside `self.sleep()`, and the event loop did its own waiting on the queue,
-  so it never learned it had been asked to stop. Shutdown is now also bounded in total rather
-  than per camera, so adding cameras cannot push it past Indigo's patience.
-
-### 1.3
-- The event and status drains are bounded. Draining until empty had no upper limit, so a
-  camera producing detections faster than they could be applied would have stopped hold
-  expiry running — leaving every device stuck on, including the cameras behaving perfectly.
-
-### 1.2
-- Log lines now carry the `[HH:MM:SS.mmm]` prefix every other plugin here uses.
-
-### 1.1
-- Live detections. A worker thread per camera holds the event stream open; the plugin's main
-  thread is the only thing that writes a device state, so no locks are needed anywhere.
-- **Dahua Camera...** device factory — one dialog per camera creates its Person and Vehicle
-  sensors together, so the pair can never be half-configured or inconsistently named.
-- Detection hold, configurable globally and per camera, so one person walking past fires a
-  trigger once rather than a dozen times.
-- **Test All Cameras** now runs in the background. Indigo's UI callbacks time out after about
-  30 seconds and a sweep of several cameras can exceed that, leaving the dialog broken.
-
-### 1.0
-- Capability probing that trusts the camera's advertised event list rather than its
-  configuration flags, because a camera will happily report smart detection as enabled while
-  being incapable of emitting it.
-- **Probe a Camera...** and **Test All Cameras** diagnostic menu items.
+Every version is listed in the [version history](https://highsteads.github.io/DahuaEvents/changelog.html).
 
 ## Authors & licence
 
