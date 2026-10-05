@@ -62,6 +62,10 @@ That is expected. The camera often reports several detections starting as one pe
 
 These devices report what the camera saw, so they cannot be switched by hand, and the Event Log says so. **Send Status Request** is the one command they take.
 
+## A device switched off with "no stop arrived"
+
+The camera said a detection had started and then never said it had stopped, usually because the camera's connection dropped in between. The device waited for the **Longest detection** time in **Plugins → DahuaEvents → Configure**, 10 minutes to start with, and then switched off. If somebody really does stand in front of the camera for longer than that, raise the setting, or set it to 0 for no limit.
+
 ## A change to the hold made no difference
 
 A new **Detection hold** in **Plugins → DahuaEvents → Configure** takes effect when you click **Save**, but only on devices without their own **Hold override**. A device with its own keeps it, so clear the override if you want that device to use the plugin's hold.

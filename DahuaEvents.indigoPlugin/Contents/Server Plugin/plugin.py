@@ -28,7 +28,13 @@
 #              stream status no longer wipes "no rule drawn on the camera",
 #              and a blocked device returns to its own verdict when the stream
 #              comes back, rather than staying on "reconnecting".
-# Version:     1.20
+#              1.21 (05-10-2026) stops a device staying on when its Stop is lost:
+#              a dropped or replaced stream gives every device of that camera
+#              that is on the normal hold, and a new "Longest detection" setting
+#              (10 minutes, 0 = off) clears one that hears no Stop. A second
+#              device for the same camera and detection is refused, and stopping
+#              one no longer removes another device's route.
+# Version:     1.21
 try:
     import indigo
 except ImportError:
@@ -73,9 +79,17 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.20"
+PLUGIN_VERSION = "1.21"
 
 DEFAULT_HOLD_SECONDS = 20
+
+# The longest a detection may stay on with no Stop from the camera, in minutes.
+# A Start whose Stop is lost (stream drop, camera reboot) would otherwise leave
+# the device on until the next detection of that class, which on a quiet camera
+# can be hours. 0 turns the limit off. Ten minutes is far longer than anything
+# walking or driving through frame, and a doorbell call ends well inside it.
+DEFAULT_MAX_DETECTION_MINUTES = 10
+MAX_DETECTION_MINUTES_LIMIT   = 1440        # a day; anything longer is a typo
 
 # Whether the per-detection narration ("Drive Person: DETECTED" / "clear") is
 # echoed to Indigo's SHARED event log. Default OFF, and deliberately so.
@@ -196,6 +210,7 @@ class Plugin(indigo.PluginBase):
         self.cam_user = DAHUA_USER or pluginPrefs.get("dahuaUser", "")
         self.cam_pass = DAHUA_PASS or pluginPrefs.get("dahuaPass", "")
         self.hold_seconds = self._hold_from_prefs(pluginPrefs)
+        self.max_on_seconds = self._max_on_from_prefs(pluginPrefs)
         self.log_activity = self._log_activity_from_prefs(pluginPrefs)
 
         # Runtime state. OWNERSHIP, deliberately: everything below is touched only
@@ -238,6 +253,50 @@ class Plugin(indigo.PluginBase):
             self.logger.warning(f"holdSeconds cannot be negative ({value}) — using 0s")
             return 0
         return value
+
+    @staticmethod
+    def _parse_max_minutes(raw):
+        """The maximum detection time as whole minutes, or None if it is not one.
+        Shared by the validator and the reader so they cannot disagree."""
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        if value < 0 or value > MAX_DETECTION_MINUTES_LIMIT:
+            return None
+        return value
+
+    def _max_on_from_prefs(self, prefs):
+        """Maximum detection time in SECONDS (0 = no limit), coerced AND guarded.
+
+        A never-saved install has no value and gets the default. Junk that got
+        past the dialog (a hand-edited .indiPref) also gets the default, with a
+        warning, rather than stopping the plugin loading.
+        """
+        raw = prefs.get("maxDetectionMinutes", DEFAULT_MAX_DETECTION_MINUTES)
+        minutes = self._parse_max_minutes(raw)
+        if minutes is None:
+            self.logger.warning(
+                f"maxDetectionMinutes is not a whole number from 0 to "
+                f"{MAX_DETECTION_MINUTES_LIMIT} ({raw!r}) — using "
+                f"{DEFAULT_MAX_DETECTION_MINUTES} minutes")
+            minutes = DEFAULT_MAX_DETECTION_MINUTES
+        return minutes * 60
+
+    def validatePrefsConfigUi(self, valuesDict):
+        """Refuse values that would otherwise be quietly replaced by a default."""
+        errors = indigo.Dict()
+        try:
+            hold_ok = int(str(valuesDict.get("holdSeconds", DEFAULT_HOLD_SECONDS)).strip()) >= 0
+        except (TypeError, ValueError):
+            hold_ok = False
+        if not hold_ok:
+            errors["holdSeconds"] = "Enter a whole number of seconds, 0 or more."
+        if self._parse_max_minutes(valuesDict.get("maxDetectionMinutes", "")) is None:
+            errors["maxDetectionMinutes"] = (
+                f"Enter a whole number of minutes from 0 to {MAX_DETECTION_MINUTES_LIMIT}. "
+                f"0 means no limit.")
+        return (not bool(errors), valuesDict, errors)
 
     def _log_activity_from_prefs(self, prefs):
         """Whether detections are echoed to the shared event log. Quiet by default.
@@ -306,13 +365,18 @@ class Plugin(indigo.PluginBase):
             return
         old_creds = (self.cam_user, self.cam_pass)
         old_hold  = self.hold_seconds
+        old_max   = self.max_on_seconds
         self.cam_user = DAHUA_USER or valuesDict.get("dahuaUser", "")
         self.cam_pass = DAHUA_PASS or valuesDict.get("dahuaPass", "")
         self.hold_seconds = self._hold_from_prefs(valuesDict)
+        self.max_on_seconds = self._max_on_from_prefs(valuesDict)
         self.log_activity = self._log_activity_from_prefs(valuesDict)
 
         if self.hold_seconds != old_hold:
             self._apply_hold_to_timers()
+        if self.max_on_seconds != old_max:
+            for timer in self._timers.values():
+                timer.max_on_seconds = self.max_on_seconds
         if (self.cam_user, self.cam_pass) != old_creds:
             self._restart_workers_with_new_credentials()
 
@@ -382,7 +446,20 @@ class Plugin(indigo.PluginBase):
             dev.replacePluginPropsOnServer(props)
             dev = indigo.devices[dev.id]        # re-fetch: the old object is stale
 
-        self._timers[dev.id] = HoldTimer(self._hold_for(dev))
+        # One device per camera and class. Validation refuses a second one now,
+        # but one made before 1.21 (or by script) would silently take the route
+        # from the first; it is put in error instead, naming the device it copies.
+        owner_id = self._by_camera.get(address, {}).get(klass)
+        if owner_id is not None and owner_id != dev.id and owner_id in self._timers:
+            owner = indigo.devices.get(owner_id)
+            owner_name = owner.name if owner is not None else str(owner_id)
+            self._mark_error(dev, f"duplicate of {owner_name}")
+            self.logger.error(f"{dev.name} watches the same camera and detection as "
+                              f"{owner_name}, so it has been left switched off. "
+                              f"Delete one of them.")
+            return
+
+        self._timers[dev.id] = HoldTimer(self._hold_for(dev), self.max_on_seconds)
         self._by_camera.setdefault(address, {})[klass] = dev.id
         dev.updateStateOnServer("onOffState", False, clearErrorState=False)
         # A (re)start begins from a clean slate: _settle_device below decides the
@@ -444,7 +521,10 @@ class Plugin(indigo.PluginBase):
         self._timers.pop(dev.id, None)
         self._blocked.pop(dev.id, None)
         if address in self._by_camera:
-            self._by_camera[address].pop(klass, None)
+            # Only this device's own route. A duplicate that never took the route
+            # must not remove the device that holds it (1.21).
+            if self._by_camera[address].get(klass) == dev.id:
+                del self._by_camera[address][klass]
             # The stream is shared by the pair, so it only stops when the last
             # device using it goes. Stopping on the first would silently kill the
             # other half of the camera.
@@ -505,6 +585,40 @@ class Plugin(indigo.PluginBase):
         if timer.hold_seconds != hold:
             timer.hold_seconds = hold
             self.logger.info(f"{name}: detection hold is now {hold}s")
+
+    @staticmethod
+    def _norm_address(address):
+        """An address as compared for duplicates: no spaces, any case."""
+        return str(address or "").strip().lower()
+
+    def _route_owner(self, address, klass, exclude_ids=()):
+        """The other device of this plugin already watching this camera and class,
+        or None."""
+        wanted = self._norm_address(address)
+        for dev in indigo.devices.iter("self"):
+            if dev.id in exclude_ids:
+                continue
+            props = dev.pluginProps
+            if (self._norm_address(props.get("address", "")) == wanted
+                    and props.get("detectionClass", "person") == klass):
+                return dev
+        return None
+
+    def validateDeviceConfigUi(self, valuesDict, typeId, devId):
+        """One device per camera and class: two would share a single route, and
+        whichever started last would take every detection from the other."""
+        errors = indigo.Dict()
+        address = str(valuesDict.get("address", "")).strip()
+        klass = valuesDict.get("detectionClass", "person")
+        if not address:
+            errors["address"] = "Enter the camera's IP address or hostname."
+        else:
+            owner = self._route_owner(address, klass, exclude_ids=(devId,))
+            if owner is not None:
+                errors["detectionClass"] = (
+                    f"{owner.name} already watches this camera for "
+                    f"{CLASS_LABELS.get(klass, klass)}. Use that device, or delete it first.")
+        return (not bool(errors), valuesDict, errors)
 
     def _verdict_for(self, address, klass):
         """Ask the right question for this class.
@@ -642,6 +756,13 @@ class Plugin(indigo.PluginBase):
     def _drain_statuses(self):
         statuses, overflowed = drain(self._statuses)
         for address, status, detail in statuses:
+            if status != "connected":
+                # The stream has dropped, failed or been replaced, so a Stop that
+                # was on its way may never arrive. Every device of this camera that
+                # is on gets the normal hold, as if it had (1.21). "connected" is
+                # left out: the worker re-affirms it every few minutes while
+                # healthy, and a fresh connection carries no news about old events.
+                self._stream_lost(address)
             if status == WORKER_STOPPED:
                 # A worker we stopped on purpose. Since 1.18 that happens while
                 # the plugin runs (a camera's stream is replaced when a second
@@ -738,6 +859,16 @@ class Plugin(indigo.PluginBase):
         if changed:
             self._write_on_off(dev, timer.is_on)
 
+    def _stream_lost(self, address):
+        """Arm the trailing hold on every device of this camera that is on."""
+        now = time.monotonic()
+        for dev_id in list(self._by_camera.get(address, {}).values()):
+            timer = self._timers.get(dev_id)
+            if timer is not None and timer.stream_lost(now):
+                dev = indigo.devices.get(dev_id)        # only with a hold of 0
+                if dev is not None:
+                    self._write_on_off(dev, timer.is_on)
+
     def _expire_holds(self):
         now = time.monotonic()
         for dev_id, timer in list(self._timers.items()):
@@ -745,6 +876,12 @@ class Plugin(indigo.PluginBase):
                 dev = indigo.devices.get(dev_id)
                 if dev is not None:
                     self._write_on_off(dev, timer.is_on)
+                    if timer.cleared_by_cap:
+                        minutes = timer.max_on_seconds // 60
+                        self.logger.info(
+                            f"{dev.name}: no stop arrived from the camera "
+                            f"{minutes} minute{'' if minutes == 1 else 's'} after the "
+                            f"last detection, so it has been cleared")
 
     def _roll_day_if_needed(self):
         """Zero the daily counters when the date changes.
@@ -861,6 +998,17 @@ class Plugin(indigo.PluginBase):
             errors["address"] = "Enter the camera's IP address or hostname."
         if not valuesDict.get("cameraName", "").strip():
             errors["cameraName"] = "Give the camera a name, e.g. Drive."
+        address = valuesDict.get("address", "").strip()
+        if address and "address" not in errors:
+            wanted = [k for k in CLASS_LABELS
+                      if valuesDict.get(f"want_{k}", k in DEFAULT_CLASSES)]
+            taken = [self._route_owner(address, k, exclude_ids=tuple(devIdList))
+                     for k in wanted]
+            taken = [d for d in taken if d is not None]
+            if taken:
+                names = ", ".join(d.name for d in taken)
+                errors["address"] = (f"This camera is already set up as {names}. "
+                                     f"Untick that detection, or delete the existing device.")
         return (not bool(errors), valuesDict, errors)
 
     def closedDeviceFactoryUi(self, valuesDict, userCancelled, devIdList):
@@ -910,6 +1058,8 @@ class Plugin(indigo.PluginBase):
         return [
             ("Credentials:", creds),
             ("Hold:",        f"{self.hold_seconds}s"),
+            ("Max on:",      f"{self.max_on_seconds // 60} min" if self.max_on_seconds
+                             else "no limit"),
             ("Cameras:",     str(len(self._by_camera))),
         ]
 

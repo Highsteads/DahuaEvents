@@ -11,7 +11,7 @@ These are under **Plugins → DahuaEvents**.
 |---|---|
 | **Probe a Camera...** | Asks one camera, by its address, whether it can send people and vehicle detections and has them switched on. It needs no device, so it is the quickest check after swapping a camera or updating its firmware. The answer goes to the Event Log, with the camera's firmware version. |
 | **Test All Cameras** | Asks every camera the plugin has devices for the same question, one after another, and writes a line for each to the Event Log, then a total such as `Probe complete: 4 capable, 1 unsupported`. It runs in the background, so the menu does not wait for it. |
-| **Show Plugin Info** | Writes the plugin's version, details of your Mac and Indigo, where the camera username and password came from, and the hold time to the Event Log. This is useful to include if you ask for help on the Indigo forum. |
+| **Show Plugin Info** | Writes the plugin's version, details of your Mac and Indigo, where the camera username and password came from, the hold time and the longest detection time to the Event Log. This is useful to include if you ask for help on the Indigo forum. |
 
 **Probe a Camera...** and **Test All Cameras** also write the same details as **Show Plugin Info** first, so one copy from the Event Log has everything needed when asking for help.
 

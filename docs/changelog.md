@@ -7,6 +7,14 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.21 — 5 October 2026
+
+**A device no longer gets stuck on.** The camera says when a detection starts and again when it stops. If the second message never arrived, because the camera rebooted or its connection dropped in between, the device stayed on until the next detection of the same kind, which on a quiet camera could be hours. Now, when a camera's connection drops or is replaced, any of its devices that are on switch off after the usual hold, unless the camera reports something new in the meantime.
+
+**Longest detection.** A new setting in **Configure**, 10 minutes to start with, switches off a device that has heard nothing from the camera for that long since its last detection, and writes a line in the Event Log saying no stop arrived. Set it to 0 for no limit.
+
+**One device per camera and detection.** Two devices watching the same camera for the same thing used to share one connection quietly, so only one of them ever switched, and deleting either could leave the other deaf. A second one is now refused when you save it, with a message naming the device that already does the job, and one made before this version is shown in error instead of taking over.
+
 ## 1.20 — 27 September 2026
 
 **A red message now stays until the problem is fixed.** When a detection cannot work, for instance because no tripwire is drawn on the camera, the device shows a short red message saying why. Indigo wipes that message whenever a plugin updates anything else on the device, and this plugin updates its devices every night at midnight, when the count of detections goes back to 0, and whenever the camera's connection drops. So the message quietly disappeared and the device looked healthy, including to any plugin that watches for devices in trouble. Now the message only goes when the plugin sees the problem is gone: the camera checks out when you choose **Send Status Request**, the connection comes back for a device that can work, or the device restarts.

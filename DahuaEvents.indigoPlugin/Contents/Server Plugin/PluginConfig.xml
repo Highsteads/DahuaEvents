@@ -26,6 +26,15 @@
         <Description>Default for all cameras; can be overridden per camera</Description>
     </Field>
 
+    <Field id="maxLabel" type="label">
+        <Label>If the camera's stream drops in the middle of a detection, the camera's "stopped" message can be lost. A sensor that hears nothing for this long after its last detection is switched off again, with a line in the event log saying so. Set 0 for no limit.</Label>
+    </Field>
+
+    <Field id="maxDetectionMinutes" type="textfield" defaultValue="10">
+        <Label>Longest detection (minutes):</Label>
+        <Description>0 to 1440; 0 means no limit</Description>
+    </Field>
+
     <Field id="sep2" type="separator"/>
 
     <Field id="loggingLabel" type="label">

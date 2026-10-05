@@ -14,9 +14,10 @@ Open these with **Plugins → DahuaEvents → Configure**. They apply to every c
 | **Camera username** | The username the plugin uses to sign in to every camera. The account needs to be allowed to read the camera's events and settings. |
 | **Camera password** | The password for that account. The box hides it while you type, but Indigo does not store it securely. If you would rather keep it out of Indigo's settings, use the shared file described below. |
 | **Detection hold (seconds)** | How long a device stays on after the camera stops reporting, 20 to start with. This is what makes one person walking past run a trigger once rather than a dozen times. Each camera can have its own, set in its devices. |
+| **Longest detection (minutes)** | If the camera's connection drops in the middle of a detection, its message saying the detection has stopped can be lost. A device that has heard nothing from the camera for this long since its last detection switches off, and the Event Log says so. 10 to start with, up to 1440. Set 0 for no limit. |
 | **Log detections to the Indigo event log** | Every detection is always written to the plugin's own log file. Tick this to see each one in the Indigo Event Log as well. It is off to start with, because two cameras put about fifty lines a day there saying what the devices already show. Warnings and errors always appear in the Event Log whichever way this is set. |
 
-A change here takes effect as soon as you click **Save**. A new username or password reconnects every camera with it and checks each device again, and a new hold reaches every device that does not have its own.
+A change here takes effect as soon as you click **Save**. A new username or password reconnects every camera with it and checks each device again, and a new hold reaches every device that does not have its own. A new **Longest detection** reaches every device.
 
 ### Keeping the username and password in one file
 
@@ -57,4 +58,4 @@ Each device also has its own settings, which you reach by editing the device.
 | **Detects** | What this device listens for: **People**, **Vehicles**, **Tripwire (line crossed)**, **Intrusion (zone entered)** or **Doorbell button pressed**. |
 | **Hold override (seconds)** | A hold for this device only. Leave it blank to use the plugin's **Detection hold**. A change here takes effect when you click **Save**. |
 
-Changing **Camera address** or **Detects** restarts the device, and the plugin checks the camera again straight away.
+Changing **Camera address** or **Detects** restarts the device, and the plugin checks the camera again straight away. Each camera can have only one device for each kind of detection, so the plugin refuses a second one and names the device that already has it. The camera dialog does the same.

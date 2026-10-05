@@ -14,8 +14,8 @@
 #              of the interesting behaviour be tested with no camera and no waiting,
 #              including the once-a-year cases a live test would never reach.
 # Author:      CliveS & Claude Opus 5
-# Date:        01-09-2026
-# Version:     1.0
+# Date:        05-10-2026
+# Version:     1.1
 
 import queue as _queue
 import re
@@ -124,15 +124,25 @@ class HoldTimer:
     through frame, which produces a burst of Start/Stop pairs, is a single
     continuous "on" rather than a dozen trigger firings.
 
+    A Stop can be lost: the stream drops, the camera reboots, or the worker is
+    replaced, between a Start and its Stop. Two things stop that leaving the
+    device on for ever (1.21). stream_lost() gives it the normal hold, as if the
+    Stop had arrived. And `max_on_seconds` (0 = no limit) clears a device that
+    has heard no Stop that long after its LATEST Start; `cleared_by_cap` then
+    says so, so the caller can tell the user why.
+
     Every method takes `now` and returns whether the on/off state CHANGED, so the
     caller writes to Indigo only on a real transition. Re-asserting an unchanged
     state would churn the state table and the SQL logger for nothing.
     """
 
-    def __init__(self, hold_seconds):
+    def __init__(self, hold_seconds, max_on_seconds=0):
         self.hold_seconds = max(0, int(hold_seconds))
+        self.max_on_seconds = max(0, int(max_on_seconds))
         self._on = False
         self._expires_at = None
+        self._last_start = None
+        self.cleared_by_cap = False
 
     @property
     def is_on(self):
@@ -142,12 +152,20 @@ class HoldTimer:
     def expires_at(self):
         return self._expires_at
 
+    def _switch_off(self, by_cap=False):
+        self._on = False
+        self._expires_at = None
+        self._last_start = None
+        self.cleared_by_cap = by_cap
+
     def start(self, now):
         """A detection began, or continues. Returns True if this switched it on."""
         self._expires_at = None          # actively detecting: nothing pending
+        self._last_start = now           # the cap counts from the latest Start
         if self._on:
             return False
         self._on = True
+        self.cleared_by_cap = False
         return True
 
     def stop(self, now):
@@ -158,24 +176,46 @@ class HoldTimer:
         if not self._on:
             return False
         if self.hold_seconds == 0:
-            self._on = False
-            self._expires_at = None
+            self._switch_off()
             return True
         self._expires_at = now + self.hold_seconds
         return False
 
+    def stream_lost(self, now):
+        """The camera's stream dropped or was replaced, so a Stop may never come.
+
+        Behaves as a Stop for a device that is on with nothing pending: the normal
+        hold, never an instant off, and a fresh Start still cancels it. An off
+        already pending keeps its time rather than being pushed later.
+        """
+        if not self._on or self._expires_at is not None:
+            return False
+        return self.stop(now)
+
+    def _cap_at(self):
+        if self.max_on_seconds and self._on and self._last_start is not None:
+            return self._last_start + self.max_on_seconds
+        return None
+
     def tick(self, now):
-        """Expire a pending off if its moment has come. Returns True if it did."""
-        if self._on and self._expires_at is not None and now >= self._expires_at:
-            self._on = False
-            self._expires_at = None
+        """Expire a pending off, or the maximum, if its moment has come.
+        Returns True if it switched off."""
+        if not self._on:
+            return False
+        if self._expires_at is not None and now >= self._expires_at:
+            self._switch_off()
+            return True
+        cap = self._cap_at()
+        if cap is not None and now >= cap:
+            self._switch_off(by_cap=True)
             return True
         return False
 
     def next_deadline(self):
         """When tick() next has something to do, or None. Lets the caller sleep
         sensibly instead of spinning."""
-        return self._expires_at
+        times = [t for t in (self._expires_at, self._cap_at()) if t is not None]
+        return min(times) if times else None
 
 
 # A drain that runs until its queue is empty has no upper bound: if a camera

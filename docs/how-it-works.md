@@ -21,6 +21,8 @@ So the device switches on at the first report and stays on while the camera keep
 
 You can change the hold for every camera in the plugin's settings, or for one camera in its own settings. A hold of 0 switches the device off the moment the camera says the detection has ended.
 
+The camera's message saying a detection has ended can be lost, if the camera reboots or its connection drops at the wrong moment. So when a camera's connection drops or is replaced, any of its devices that are on start the hold just as if that message had arrived. And a device that has heard nothing from the camera for the **Longest detection** time, 10 minutes unless you change it, switches off with a line in the Event Log saying no stop arrived.
+
 ## Checking what each detection needs
 
 When a device starts, the plugin asks the camera whether that detection can actually work, and shows the answer on the device:

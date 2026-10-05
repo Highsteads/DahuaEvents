@@ -2,7 +2,7 @@
 
 **Turn a Dahua camera's own person and vehicle detection, and a video doorbell's button, into Indigo sensors.**
 
-**Version:** 1.20 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
+**Version:** 1.21 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
 
 **[Read the full guide](https://highsteads.github.io/DahuaEvents/)** — setting up, what everything means, and what to do when something goes wrong.
 
@@ -47,13 +47,13 @@ The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each st
 
 ## What's new
 
+**v1.21** — A device no longer stays on for hours when the camera's "stopped" message is lost, for instance because the camera rebooted mid-detection. When a camera's connection drops, any of its devices that are on switch off after the usual hold, and a new **Longest detection** setting, 10 minutes to start with, switches off one that hears nothing more. A second device for the same camera and detection is now refused.
+
 **v1.20** — A device that cannot work, such as one with no rule drawn on the camera, now keeps its red message until the problem is fixed. Before, the message vanished at midnight or when the camera's connection dropped, so the device looked healthy. It also goes back to its own message when the camera's connection returns, instead of staying on **Reconnecting**.
 
 **v1.19.1** — Since 1.18 the plugin swaps a camera's connection while it runs, and the old connection's last word was being written to every device on that camera, which Indigo refused and logged as an error. It is now ignored.
 
 **v1.19** — A new hold, camera username or password typed into **Configure** now takes effect when you click **Save**, with no reload, and so does a device's own hold. The plugin also comes with a template for the shared `IndigoSecrets.py` file.
-
-**v1.18** — On a camera with both a Person and a Vehicle device, the second one to start never switched on, because the camera was only ever asked for the first one's detections. The plugin now asks for every device's detection, so Vehicle devices work. Adding a device to a camera later works straight away too, without a restart.
 
 Every version is listed in the [version history](https://highsteads.github.io/DahuaEvents/changelog.html).
 
