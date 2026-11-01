@@ -111,6 +111,7 @@
                         <Option value="unsupported">Unsupported</Option>
                         <Option value="noRule">No rule drawn on the camera</Option>
                         <Option value="disabled">Disabled on camera</Option>
+                        <Option value="loginRefused">Camera refused the login</Option>
                     </List>
                 </ValueType>
                 <TriggerLabel>Stream state</TriggerLabel>

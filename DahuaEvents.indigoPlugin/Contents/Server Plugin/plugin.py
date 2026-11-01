@@ -34,7 +34,12 @@
 #              (10 minutes, 0 = off) clears one that hears no Stop. A second
 #              device for the same camera and detection is refused, and stopping
 #              one no longer removes another device's route.
-# Version:     1.21
+#              1.22 (01-11-2026) stops a wrong password locking the camera
+#              account: each login sends the password once instead of six
+#              times, a refused login shows "Camera refused the login" on the
+#              camera's devices instead of "Reconnecting", and the stream waits
+#              30 minutes before trying again instead of one minute.
+# Version:     1.22
 try:
     import indigo
 except ImportError:
@@ -59,6 +64,7 @@ except ImportError:
 import dahua_probe
 from dahua_stream import HoldTimer, drain
 from dahua_worker import CameraWorker
+from dahua_worker import LOGIN_REFUSED as WORKER_LOGIN_REFUSED
 from dahua_worker import STOPPED as WORKER_STOPPED
 
 # Camera credentials: IndigoSecrets.py first, PluginConfig as the fallback.
@@ -79,7 +85,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.21"
+PLUGIN_VERSION = "1.22"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -227,6 +233,9 @@ class Plugin(indigo.PluginBase):
                                               # settled verdict while camera-side config
                                               # (no rule / disabled / unsupported) blocks
                                               # it, None when it does not
+        self._login_refused = set()          # addresses whose stream was last refused
+                                              # the login; written on the main thread,
+                                              # read by _settle_device
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -510,7 +519,12 @@ class Plugin(indigo.PluginBase):
                 dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
             else:
-                dev.updateStateOnServer("streamState", "reconnecting", clearErrorState=False)
+                # A probe cannot tell a refused login from a camera that is away,
+                # but the stream can. If it has said the login was refused, keep
+                # saying so rather than overwrite it with "reconnecting" (1.22).
+                state = (WORKER_LOGIN_REFUSED if address in self._login_refused
+                         else "reconnecting")
+                dev.updateStateOnServer("streamState", state, clearErrorState=False)
                 self.logger.error(f"{dev.name}: {reason}")
         except Exception:
             self.logger.exception(f"could not settle device {dev_id}")
@@ -763,6 +777,10 @@ class Plugin(indigo.PluginBase):
                 # left out: the worker re-affirms it every few minutes while
                 # healthy, and a fresh connection carries no news about old events.
                 self._stream_lost(address)
+            if status == WORKER_LOGIN_REFUSED:
+                self._login_refused.add(address)
+            elif status == "connected":
+                self._login_refused.discard(address)
             if status == WORKER_STOPPED:
                 # A worker we stopped on purpose. Since 1.18 that happens while
                 # the plugin runs (a camera's stream is replaced when a second
@@ -796,6 +814,9 @@ class Plugin(indigo.PluginBase):
                 if status == "unsupported":
                     dev.setErrorStateOnServer(
                     dahua_probe.ascii_only(detail) or "camera cannot emit smart detections")
+                elif status == WORKER_LOGIN_REFUSED:
+                    # Shown in red until the stream connects again (1.22).
+                    dev.setErrorStateOnServer("camera refused the login")
                 elif status == "connected":
                     dev.setErrorStateOnServer("")
             if detail:

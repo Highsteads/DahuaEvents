@@ -107,7 +107,8 @@ def test_worker_statuses_that_reach_stream_state_are_declared():
     """_drain_statuses writes the worker's status straight into streamState for
     everything except STOPPED (1.19.1)."""
     options = _stream_state_options()
-    for status in (dahua_worker.CONNECTED, dahua_worker.RECONNECTING, dahua_worker.UNSUPPORTED):
+    for status in (dahua_worker.CONNECTED, dahua_worker.RECONNECTING, dahua_worker.UNSUPPORTED,
+                   dahua_worker.LOGIN_REFUSED):
         assert status in options, f"worker status {status!r} is not a streamState option"
 
 

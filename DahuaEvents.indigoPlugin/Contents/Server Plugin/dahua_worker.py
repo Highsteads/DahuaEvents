@@ -13,8 +13,16 @@
 #              the capability check halts rather than retrying for ever — quiet, back
 #              off, then stop.
 # Author:      CliveS & Claude Sonnet 5
-# Date:        03-09-2026
-# Version:     1.1
+# Date:        01-11-2026
+# Version:     1.2
+#
+# v1.2 (01-11-2026): a refused login is no longer retried every minute. The
+# stream used to treat a 401 like any dropped connection: "reconnecting", then
+# again after at most 60 seconds, for ever, and each try sent the wrong password
+# six times (see dahua_probe v1.3). With the camera locking an account after a
+# few failures, a password changed on the camera but not in Indigo kept the
+# account locked, for the NVR and the phone app too. Now one try per connect, a
+# LOGIN_REFUSED status that says what happened, and the next try 30 minutes on.
 #
 # v1.1 (03-09-2026): CONNECTED is now re-affirmed periodically while a stream
 # stays open, healthy and silent — not just once, at open. status_cb used to
@@ -32,8 +40,6 @@
 import select
 import threading
 import time
-import urllib.error
-import urllib.request
 
 import dahua_probe
 from dahua_stream import StreamParser
@@ -52,6 +58,13 @@ def attach_path(codes):
 # "the camera never came back" when it simply was not asked.
 BACKOFF_START = 1
 BACKOFF_MAX   = 60
+
+# After the camera turns the username or password down. Trying again sooner
+# only adds failed logins, and Dahua locks an account after a few of them; a
+# lock also refuses the RIGHT password until it times out, which is why this
+# still retries rather than giving up. New credentials saved in Configure start
+# a fresh worker at once, so fixing it in Indigo does not wait for this.
+LOGIN_RETRY   = 1800
 
 # A camera sends a heartbeat every 5s. Three missed beats means the connection is
 # dead even though the socket is still nominally open — the classic half-open TCP
@@ -79,6 +92,7 @@ CHUNK         = 512
 CONNECTED    = "connected"
 RECONNECTING = "reconnecting"
 UNSUPPORTED  = "unsupported"
+LOGIN_REFUSED = "loginRefused"
 STOPPED      = "stopped"
 
 
@@ -113,11 +127,8 @@ class CameraWorker(threading.Thread):
 
     def _open(self):
         url = f"http://{self.address}{attach_path(self.codes)}"
-        mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-        mgr.add_password(None, url, self._user, self._password)
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPDigestAuthHandler(mgr),
-            urllib.request.HTTPBasicAuthHandler(mgr))
+        # The shared opener: it sends the password once and stops if it is refused.
+        opener = dahua_probe.make_opener(url, self._user, self._password)
         return opener.open(url, timeout=READ_TIMEOUT)
 
     def _pump(self):
@@ -194,16 +205,26 @@ class CameraWorker(threading.Thread):
 
         backoff = BACKOFF_START
         while not self._stop.is_set():
+            wait = backoff
             try:
                 self._pump()
                 backoff = BACKOFF_START          # a clean run resets the penalty
+                wait = backoff
             except Exception as exc:             # noqa: BLE001 - one camera, one failure
                 if self._stop.is_set():
                     break
-                self._set_status(RECONNECTING, f"{type(exc).__name__}: {exc}")
+                if dahua_probe.is_login_refused(exc):
+                    # Not a network fault, so not "reconnecting": say what it is,
+                    # and do not hand the camera another failed login for a while.
+                    self._set_status(LOGIN_REFUSED,
+                                     f"the camera refused the username or password; "
+                                     f"trying again in {LOGIN_RETRY // 60} minutes")
+                    wait = LOGIN_RETRY
+                else:
+                    self._set_status(RECONNECTING, f"{type(exc).__name__}: {exc}")
             finally:
                 self._close_response()
-            if self._stop.wait(backoff):
+            if self._stop.wait(wait):
                 break
             backoff = min(backoff * 2, BACKOFF_MAX)
         self._set_status(STOPPED)

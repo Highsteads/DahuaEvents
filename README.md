@@ -2,7 +2,7 @@
 
 **Turn a Dahua camera's own person and vehicle detection, and a video doorbell's button, into Indigo sensors.**
 
-**Version:** 1.21 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
+**Version:** 1.22 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
 
 **[Read the full guide](https://highsteads.github.io/DahuaEvents/)** — setting up, what everything means, and what to do when something goes wrong.
 
@@ -46,6 +46,8 @@ The plugin uses one camera username and password for every camera.
 The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each step, explains what to switch on in the camera, and covers what to do if something does not work.
 
 ## What's new
+
+**v1.22** — A wrong camera password no longer keeps the camera's account locked. Before, each try sent the wrong password six times and the plugin tried again every minute, which is enough for a Dahua camera to lock the account, for your NVR and phone app too. Now the password is sent once, the devices show **Camera refused the login**, and the plugin waits 30 minutes before trying again. Saving a new password in **Configure** still reconnects straight away.
 
 **v1.21** — A device no longer stays on for hours when the camera's "stopped" message is lost, for instance because the camera rebooted mid-detection. When a camera's connection drops, any of its devices that are on switch off after the usual hold, and a new **Longest detection** setting, 10 minutes to start with, switches off one that hears nothing more. A second device for the same camera and detection is now refused.
 

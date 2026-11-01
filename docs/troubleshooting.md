@@ -46,6 +46,13 @@ The plugin cannot reach the camera, or has lost it, and is trying again, waiting
 
 When the camera answers again, the device shows **Connected** by itself.
 
+## A device shows "Camera refused the login"
+
+The camera turned down the username or password the plugin uses. The plugin sends it only once and then waits 30 minutes, so it does not keep the camera's account locked.
+
+- Log in to the camera's own web page with the same username and password. If that fails too, the password has changed on the camera, or the camera has locked the account for a while after too many failed logins.
+- Put the right details in **Plugins → DahuaEvents → Configure** and click **Save**. The plugin reconnects at once. If you keep them in the shared file the [Settings](settings.md) page describes, choose **Plugins → DahuaEvents → Reload** instead.
+
 ## A device shows Connected but never switches on
 
 The plugin is hearing from the camera, but the camera is not reporting anything for this device.

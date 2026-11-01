@@ -14,8 +14,14 @@
 #              no sockets, no clock, no indigo import — so it runs under test with no
 #              hardware. The network layer is a thin shell at the bottom.
 # Author:      CliveS & Claude Sonnet 5
-# Date:        06-09-2026
-# Version:     1.2
+# Date:        01-11-2026
+# Version:     1.3
+#
+# v1.3 (01-11-2026): a wrong password is sent ONCE per request, not six times.
+# urllib's HTTPDigestAuthHandler retries a rejected login on its own until its
+# counter passes 5, so every request with a wrong password cost the camera six
+# failed logins, which is enough to lock a Dahua account. _OneTryDigestAuthHandler
+# stops after the first refusal. Shared with dahua_worker via make_opener().
 
 import re
 import urllib.error
@@ -261,15 +267,51 @@ def describe(verdict, reason, address):
 # Network shell — thin, and the only part that needs a camera
 # ============================================================
 
-def _opener(url, user, password):
+class _OneTryDigestAuthHandler(urllib.request.HTTPDigestAuthHandler):
+    """Digest login that sends the password once, and stops if it is refused.
+
+    The standard handler answers a 401 by retrying, and when the retry is
+    refused it retries again, until an internal counter passes 5. Every retry
+    is a failed login on the camera: measured 01-11-2026 against a local server
+    that refuses everything, one request made 7 calls, 6 of them carrying the
+    wrong password. Dahua cameras lock an account after a few failed logins, so
+    that alone could lock it, and the stream retries for ever.
+
+    Request.get_header() looks at the header the retry adds, so a 401 on a
+    request that already carries an Authorization header means "this password
+    was refused", and it is reported at once instead of tried again.
+    """
+
+    def http_error_401(self, req, fp, code, msg, headers):
+        if req.get_header(self.auth_header):
+            raise urllib.error.HTTPError(req.full_url, 401, LOGIN_REFUSED_TEXT,
+                                         headers, fp)
+        return super().http_error_401(req, fp, code, msg, headers)
+
+
+# The text of the HTTPError raised above. No URL, user or password in it.
+LOGIN_REFUSED_TEXT = "login refused"
+
+
+def is_login_refused(exc):
+    """True when an exception means the camera turned the credentials down."""
+    return isinstance(exc, urllib.error.HTTPError) and exc.code == 401
+
+
+def make_opener(url, user, password):
+    """An opener that logs in with Digest, or Basic for old cameras, trying the
+    password at most once per request. Used by fetch() and by the stream worker."""
     mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     mgr.add_password(None, url, user, password)
     # Digest first: it is what current firmware wants. Basic is kept for older
-    # cameras that never learned digest.
+    # cameras that never learned digest; urllib's Basic handler already gives up
+    # after one refused try.
     return urllib.request.build_opener(
-        urllib.request.HTTPDigestAuthHandler(mgr),
+        _OneTryDigestAuthHandler(mgr),
         urllib.request.HTTPBasicAuthHandler(mgr),
     )
+
+
 
 
 def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
@@ -280,7 +322,7 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
     """
     url = f"http://{address}{path}"
     try:
-        return _opener(url, user, password).open(url, timeout=timeout).read().decode(
+        return make_opener(url, user, password).open(url, timeout=timeout).read().decode(
             "utf-8", errors="replace")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
         return None

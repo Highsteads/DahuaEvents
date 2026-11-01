@@ -37,6 +37,8 @@ The answer belongs to that one device, so a camera whose people detection works 
 
 If the camera closes the connection, or goes 20 seconds without even a "still here" message, the plugin sets the camera's devices to **Reconnecting**, writes a warning to the Event Log, and tries again after one second. Each failed try doubles the wait, up to one minute, so a camera that is off for a while is asked once a minute until it comes back. When it does, the devices show **Connected** again.
 
+If the camera turns down the username or password, the devices show **Camera refused the login** instead, and the plugin waits 30 minutes before trying again. Trying sooner would only add failed logins, and Dahua cameras lock an account after a few of them. Saving new details in **Configure** reconnects straight away.
+
 A camera whose firmware cannot send any of the detections its devices need is not asked again at all, because asking more often will not change its firmware. Its devices say so instead.
 
 While a connection stays open and quiet, the plugin still marks its devices as heard from every five minutes. That way Indigo, and anything that watches for devices that have gone silent, can tell a quiet camera from a lost one.

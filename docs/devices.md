@@ -36,6 +36,7 @@ You can rename the devices freely. If you delete one and create it again, Indigo
 | **Unsupported** | The camera's firmware cannot send this detection, or the device has no camera address. |
 | **No rule drawn on the camera** | A tripwire or intrusion device, and no rule of that kind is drawn on the camera. |
 | **Disabled on camera** | The camera can do this, but it is switched off in the camera's settings. |
+| **Camera refused the login** | The camera turned down the username or password. The plugin tries again every 30 minutes, or at once when you save new details in **Configure**. |
 
 When a detection cannot work, the device also shows a short red message in the device list saying why:
 

@@ -7,6 +7,10 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.22 — 1 November 2026
+
+**A wrong password no longer locks the camera's account.** When the camera turned down the username or password, the plugin quietly tried the same password five more times, then treated it like a dropped connection and did it all again every minute. Dahua cameras lock an account after a few failed logins, so a password changed on the camera but not in Indigo kept that account locked, including for an NVR or phone app using it. Now each login sends the password once. When the camera refuses it, the camera's devices show **Camera refused the login** in red, the Event Log says so, and the plugin waits 30 minutes before trying again, in case the camera has only locked the account for a while. Saving new details in **Configure** reconnects at once.
+
 ## 1.21 — 5 October 2026
 
 **A device no longer gets stuck on.** The camera says when a detection starts and again when it stops. If the second message never arrived, because the camera rebooted or its connection dropped in between, the device stayed on until the next detection of the same kind, which on a quiet camera could be hours. Now, when a camera's connection drops or is replaced, any of its devices that are on switch off after the usual hold, unless the camera reports something new in the meantime.
