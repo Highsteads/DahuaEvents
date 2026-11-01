@@ -28,6 +28,10 @@
                 <Label>Camera address:</Label>
                 <Description>IP address or hostname, e.g. 192.168.1.64</Description>
             </Field>
+            <Field id="channel" type="textfield">
+                <Label>NVR channel:</Label>
+                <Description>Leave blank for a camera. For an NVR, the channel number as the NVR shows it (1 = first)</Description>
+            </Field>
             <Field id="holdOverride" type="textfield">
                 <Label>Hold override (seconds):</Label>
                 <Description>Leave blank to use the plugin default</Description>
@@ -72,6 +76,10 @@
                 <Label>Camera address:</Label>
                 <Description>IP address or hostname, e.g. 192.168.1.64</Description>
             </Field>
+            <Field id="channel" type="textfield">
+                <Label>NVR channel:</Label>
+                <Description>Leave blank for a camera. For an NVR, the channel number as the NVR shows it (1 = first)</Description>
+            </Field>
             <Field id="detectionClass" type="menu" defaultValue="person">
                 <Label>Detects:</Label>
                 <List>
@@ -111,6 +119,7 @@
                         <Option value="unsupported">Unsupported</Option>
                         <Option value="noRule">No rule drawn on the camera</Option>
                         <Option value="disabled">Disabled on camera</Option>
+                        <Option value="loginRefused">Camera refused the login</Option>
                     </List>
                 </ValueType>
                 <TriggerLabel>Stream state</TriggerLabel>

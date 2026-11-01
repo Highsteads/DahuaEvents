@@ -36,6 +36,7 @@ You can rename the devices freely. If you delete one and create it again, Indigo
 | **Unsupported** | The camera's firmware cannot send this detection, or the device has no camera address. |
 | **No rule drawn on the camera** | A tripwire or intrusion device, and no rule of that kind is drawn on the camera. |
 | **Disabled on camera** | The camera can do this, but it is switched off in the camera's settings. |
+| **Camera refused the login** | The camera turned down the username or password. The plugin tries again every 30 minutes, or at once when you save new details in **Configure**. |
 
 When a detection cannot work, the device also shows a short red message in the device list saying why:
 
@@ -45,6 +46,8 @@ When a detection cannot work, the device also shows a short red message in the d
 | **switched off at the camera** | Switch on motion detection and smart motion detection, or the tripwire or zone rule, in the camera's settings. |
 | **camera cannot emit this detection** | This camera cannot do it. For people and vehicles on an older camera, try a tripwire or intrusion zone instead. |
 | **no camera address configured** | Open the device's settings and fill in **Camera address**. |
+| **channel must be blank or 1 to 256** | Open the device's settings and correct **NVR channel**. |
+| **duplicate of** *another device* | Another device already hears this detection on this camera and channel. Delete one of them. |
 
 The message stays until the plugin sees the problem is fixed, so it does not disappear overnight or when the camera's connection drops. Once you have changed the camera, select the device and choose **Send Status Request**, and the plugin checks again. The [Your cameras](cameras.md) page explains what each camera needs.
 

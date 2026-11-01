@@ -39,6 +39,16 @@ A Dahua or Amcrest video doorbell can have a **Pressed** device, which switches 
 
 The doorbell reports a press as a call nobody has answered. At least the AD110 sends that without listing it among the events it offers, so the plugin also goes by the doorbell's model name — any model whose name begins AD1, AD4, AD5, DB or VTO counts as a doorbell. An ordinary camera given a doorbell device is reported as **not supported** rather than being left to wait for a press that will never come.
 
+## Cameras on an NVR
+
+A Dahua NVR can report the detections of all the cameras plugged into it, using the NVR's address. It says which channel each detection came from, so fill in **NVR channel** with that camera's channel number, as the NVR numbers it (1 is the first). Add the camera once per channel, with a different **Camera name** each time, such as `Drive` for channel 1 and `Garden` for channel 2.
+
+- **With a channel**, the device hears only that channel, and **Check This Camera** and **Send Status Request** look at that channel's settings and drawn rules.
+- **Blank**, the device hears every channel. It switches on when any channel sees something, and off only after every channel that started has finished.
+- Two devices for the same address and detection cannot hear the same channel, so a device for every channel cannot sit alongside one for channel 2.
+
+I have not been able to test this on an NVR. It follows the way a single camera numbers its one channel: the first channel is 0 on the event connection and in the camera's settings. If a device for channel 1 reacts to the second camera, please report it. In the meantime, connecting to each camera's own address, with **NVR channel** blank, works as it always has.
+
 ## What Check This Camera tells you
 
 The **Check This Camera** button in the camera dialog asks the camera about all five detections at once and shows one line, such as:

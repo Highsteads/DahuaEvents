@@ -13,8 +13,28 @@
 #              the capability check halts rather than retrying for ever — quiet, back
 #              off, then stop.
 # Author:      CliveS & Claude Sonnet 5
-# Date:        03-09-2026
-# Version:     1.1
+# Date:        01-11-2026
+# Version:     1.3
+#
+# v1.3 (01-11-2026): an event already read off the socket is no longer left
+# waiting for the next packet. select() watches the SOCKET, but Python's HTTP
+# layer reads ahead into its own buffer: with chunked transfer encoding it takes
+# in several chunks and returns one, and the response headers bring in whatever
+# arrived with them. select() then saw an empty socket while events sat in that
+# buffer, until the next heartbeat (5 s) or packet. Reproduced with a real
+# socket server (tests/test_stream_buffering.py), where the events did not
+# arrive at all. _buffered() now looks in that buffer before select() waits.
+#
+# v1.2 (01-11-2026): a refused login is no longer retried every minute. The
+# stream used to treat a 401 like any dropped connection: "reconnecting", then
+# again after at most 60 seconds, for ever, and each try sent the wrong password
+# six times (see dahua_probe v1.3). With the camera locking an account after a
+# few failures, a password changed on the camera but not in Indigo kept the
+# account locked, for the NVR and the phone app too. Now one try per connect, a
+# LOGIN_REFUSED status that says what happened, and the next try 30 minutes on.
+# The refusal is shared with dahua_probe's capability checks (login_refused_for /
+# record_login), so a refusal seen by EITHER stops both: a plugin start with a
+# wrong password costs the camera one failed login, not one per device.
 #
 # v1.1 (03-09-2026): CONNECTED is now re-affirmed periodically while a stream
 # stays open, healthy and silent — not just once, at open. status_cb used to
@@ -30,10 +50,9 @@
 # than relying on the watchdog knowing to be lenient with this plugin.
 
 import select
+import socket
 import threading
 import time
-import urllib.error
-import urllib.request
 
 import dahua_probe
 from dahua_stream import StreamParser
@@ -52,6 +71,14 @@ def attach_path(codes):
 # "the camera never came back" when it simply was not asked.
 BACKOFF_START = 1
 BACKOFF_MAX   = 60
+
+# After the camera turns the username or password down. Trying again sooner
+# only adds failed logins, and Dahua locks an account after a few of them; a
+# lock also refuses the RIGHT password until it times out, which is why this
+# still retries rather than giving up. New credentials saved in Configure start
+# a fresh worker at once, so fixing it in Indigo does not wait for this. The
+# number lives in dahua_probe so the stream and the checks keep the same wait.
+LOGIN_RETRY   = dahua_probe.LOGIN_RETRY
 
 # A camera sends a heartbeat every 5s. Three missed beats means the connection is
 # dead even though the socket is still nominally open — the classic half-open TCP
@@ -79,6 +106,7 @@ CHUNK         = 512
 CONNECTED    = "connected"
 RECONNECTING = "reconnecting"
 UNSUPPORTED  = "unsupported"
+LOGIN_REFUSED = "loginRefused"
 STOPPED      = "stopped"
 
 
@@ -113,11 +141,8 @@ class CameraWorker(threading.Thread):
 
     def _open(self):
         url = f"http://{self.address}{attach_path(self.codes)}"
-        mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-        mgr.add_password(None, url, self._user, self._password)
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPDigestAuthHandler(mgr),
-            urllib.request.HTTPBasicAuthHandler(mgr))
+        # The shared opener: it sends the password once and stops if it is refused.
+        opener = dahua_probe.make_opener(url, self._user, self._password)
         return opener.open(url, timeout=READ_TIMEOUT)
 
     def _pump(self):
@@ -145,16 +170,21 @@ class CameraWorker(threading.Thread):
         """
         parser = StreamParser()
         self._response = self._open()
+        # The camera took these details, so the checks may run side by side again.
+        dahua_probe.record_login(self.address, self._user, self._password, accepted=True)
         self._set_status(CONNECTED)
         last_data = time.monotonic()
         last_reaffirm = last_data
 
         while not self._stop.is_set():
-            try:
-                readable, _, _ = select.select([self._response], [], [], SELECT_TICK)
-            except (OSError, ValueError):
-                # The response was closed under us — that is a stop, not a fault.
-                return
+            if self._buffered():
+                readable = True        # already read off the socket: select() cannot see it
+            else:
+                try:
+                    readable, _, _ = select.select([self._response], [], [], SELECT_TICK)
+                except (OSError, ValueError):
+                    # The response was closed under us — that is a stop, not a fault.
+                    return
             if not readable:
                 now = time.monotonic()
                 if now - last_data > READ_TIMEOUT:
@@ -194,19 +224,85 @@ class CameraWorker(threading.Thread):
 
         backoff = BACKOFF_START
         while not self._stop.is_set():
+            # A refusal is remembered per camera, whether the stream or a
+            # capability check heard it (the capability check just above, at a
+            # plugin start). While it stands, connecting would only add another
+            # failed login, so say so once and wait it out.
+            remaining = self._login_wait()
+            if remaining:
+                minutes = max(1, int(-(-remaining // 60)))      # round up
+                self._set_status(LOGIN_REFUSED,
+                                 f"the camera refused the username or password; "
+                                 f"trying again in {minutes} minute"
+                                 f"{'' if minutes == 1 else 's'}")
+                if self._stop.wait(remaining):
+                    break
+                continue
+            wait = backoff
             try:
                 self._pump()
                 backoff = BACKOFF_START          # a clean run resets the penalty
+                wait = backoff
             except Exception as exc:             # noqa: BLE001 - one camera, one failure
                 if self._stop.is_set():
                     break
-                self._set_status(RECONNECTING, f"{type(exc).__name__}: {exc}")
+                if dahua_probe.is_login_refused(exc):
+                    # Not a network fault, so not "reconnecting". Recorded, and the
+                    # top of the loop reports it and waits.
+                    dahua_probe.record_login(self.address, self._user, self._password,
+                                             accepted=False)
+                    wait = 0
+                else:
+                    self._set_status(RECONNECTING, f"{type(exc).__name__}: {exc}")
             finally:
                 self._close_response()
-            if self._stop.wait(backoff):
+            if self._stop.wait(wait):
                 break
             backoff = min(backoff * 2, BACKOFF_MAX)
         self._set_status(STOPPED)
+
+    def _buffered(self):
+        """True when the response holds stream data that select() cannot see.
+
+        Looks without waiting: the socket is made non-blocking for a peek() and
+        put back as it was. Only waiting is avoided, never data lost: peek()
+        moves bytes into the buffer and leaves them there for read1().
+
+        A buffer holding only line ends is reported as empty. In a chunked stream
+        that is the CRLF after a chunk, which Python only discards on the NEXT
+        read, and that read would then sit waiting for the next chunk's size
+        line, out of reach of the stop flag.
+
+        Reaches the socket through the response's raw reader (`fp.raw._sock`),
+        which Python does not document. If that is ever missing this returns
+        False, which is exactly the behaviour before v1.3, and
+        tests/test_stream_buffering.py fails so it is noticed.
+        """
+        fp = getattr(self._response, "fp", None)
+        sock = getattr(getattr(fp, "raw", None), "_sock", None)
+        if fp is None or not isinstance(sock, socket.socket):
+            return False
+        try:
+            previous = sock.gettimeout()
+        except OSError:
+            return False
+        try:
+            sock.settimeout(0)
+            waiting = fp.peek(1)
+        except (OSError, ValueError):
+            return False
+        finally:
+            try:
+                sock.settimeout(previous)
+            except OSError:
+                pass
+        return bool(waiting.strip(b"\r\n"))
+
+    def _login_wait(self):
+        """Seconds to wait before these details may be tried on this camera, or 0.
+        Never longer than LOGIN_RETRY, whatever the shared record says."""
+        remaining = dahua_probe.login_refused_for(self.address, self._user, self._password)
+        return min(remaining, LOGIN_RETRY) if remaining else 0
 
     def _close_response(self):
         if self._response is not None:

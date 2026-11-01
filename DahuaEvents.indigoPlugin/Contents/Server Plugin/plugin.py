@@ -34,7 +34,26 @@
 #              (10 minutes, 0 = off) clears one that hears no Stop. A second
 #              device for the same camera and detection is refused, and stopping
 #              one no longer removes another device's route.
-# Version:     1.21
+#              1.22 (01-11-2026) stops a wrong password locking the camera
+#              account: each login sends the password once instead of six
+#              times, a refused login shows "Camera refused the login" on the
+#              camera's devices instead of "Reconnecting", and the stream waits
+#              30 minutes before trying again instead of one minute. The
+#              capability checks share that refusal, so a start with a wrong
+#              password costs the camera one failed login, not one per device.
+#              1.23 (01-11-2026) adds a Channel setting for an NVR, whose
+#              channels all share one event stream. A device with a channel
+#              hears only that channel, and its checks read that channel's
+#              settings. A device with none hears every channel, as before, but
+#              now stays on until every channel that started has stopped.
+#              1.24 (01-11-2026) handles action=Pulse, an event reported as a
+#              single moment: on, the usual hold, then off. Anything other
+#              than Start, Stop or Pulse is ignored with one warning per kind,
+#              instead of being treated as a Stop.
+#              1.25 (01-11-2026) passes on events as soon as they arrive. Some
+#              could wait in Python's own read-ahead buffer, unseen, until the
+#              camera next sent anything (up to 5 seconds), see dahua_worker 1.3.
+# Version:     1.25
 try:
     import indigo
 except ImportError:
@@ -59,6 +78,7 @@ except ImportError:
 import dahua_probe
 from dahua_stream import HoldTimer, drain
 from dahua_worker import CameraWorker
+from dahua_worker import LOGIN_REFUSED as WORKER_LOGIN_REFUSED
 from dahua_worker import STOPPED as WORKER_STOPPED
 
 # Camera credentials: IndigoSecrets.py first, PluginConfig as the fallback.
@@ -79,7 +99,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.21"
+PLUGIN_VERSION = "1.25"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -180,6 +200,49 @@ def log(message, level="INFO"):
                       level=_lvl(level))
 
 
+# An NVR numbers its channels from 1 in its own screens; the event stream and the
+# camera's settings count from 0 (index=0 is the first channel). The device's
+# Channel setting is the NVR's number, so an event's channel is index + 1.
+# Blank means every channel, which for a single camera is its only one.
+MAX_CHANNEL = 256
+
+
+def parse_channel(raw):
+    """(True, None) for blank, (True, n) for a whole number 1..MAX_CHANNEL,
+    (False, None) for anything else."""
+    text = str(raw if raw is not None else "").strip()
+    if text == "":
+        return True, None
+    try:
+        value = int(text)
+    except ValueError:
+        return False, None
+    if 1 <= value <= MAX_CHANNEL:
+        return True, value
+    return False, None
+
+
+def route_key(klass, channel):
+    """How a device is filed under its camera in Plugin._by_camera. A device for
+    every channel keeps the plain class name it has always had; one channel's
+    device is (class, channel)."""
+    return klass if channel is None else (klass, channel)
+
+
+def route_class(key):
+    return key[0] if isinstance(key, tuple) else key
+
+
+def route_channel(key):
+    return key[1] if isinstance(key, tuple) else None
+
+
+def channels_overlap(a, b):
+    """Two devices for the same camera and class clash when they would hear the
+    same events: the same channel, or either one listening to every channel."""
+    return a is None or b is None or a == b
+
+
 def worker_is_current(worker, codes):
     """True when a camera's running worker already asks for exactly these codes.
 
@@ -227,6 +290,7 @@ class Plugin(indigo.PluginBase):
                                               # settled verdict while camera-side config
                                               # (no rule / disabled / unsupported) blocks
                                               # it, None when it does not
+        self._unknown_actions = set()        # (code, action) already warned about
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -419,9 +483,8 @@ class Plugin(indigo.PluginBase):
         self._stop_all_workers()
         for address in addresses:
             self._ensure_worker(address)
-            for klass, dev_id in list(self._by_camera.get(address, {}).items()):
-                threading.Thread(target=self._settle_device, args=(dev_id, address, klass),
-                                 daemon=True, name=f"DahuaVerdict-{dev_id}").start()
+            for key, dev_id in list(self._by_camera.get(address, {}).items()):
+                self._start_settle(dev_id, address, route_class(key), route_channel(key))
         self.logger.info(f"Camera username or password changed, reconnecting "
                          f"{len(addresses)} camera(s)")
 
@@ -434,6 +497,10 @@ class Plugin(indigo.PluginBase):
         klass   = dev.pluginProps.get("detectionClass", "person")
         if not address:
             self._mark_error(dev, "no camera address configured")
+            return
+        channel_ok, channel = parse_channel(dev.pluginProps.get("channel", ""))
+        if not channel_ok:
+            self._mark_error(dev, f"channel must be blank or 1 to {MAX_CHANNEL}")
             return
 
         # A binary sensor needs SupportsOnState for the native onOffState to exist
@@ -449,8 +516,8 @@ class Plugin(indigo.PluginBase):
         # One device per camera and class. Validation refuses a second one now,
         # but one made before 1.21 (or by script) would silently take the route
         # from the first; it is put in error instead, naming the device it copies.
-        owner_id = self._by_camera.get(address, {}).get(klass)
-        if owner_id is not None and owner_id != dev.id and owner_id in self._timers:
+        owner_id = self._route_clash(address, klass, channel, dev.id)
+        if owner_id is not None:
             owner = indigo.devices.get(owner_id)
             owner_name = owner.name if owner is not None else str(owner_id)
             self._mark_error(dev, f"duplicate of {owner_name}")
@@ -460,7 +527,7 @@ class Plugin(indigo.PluginBase):
             return
 
         self._timers[dev.id] = HoldTimer(self._hold_for(dev), self.max_on_seconds)
-        self._by_camera.setdefault(address, {})[klass] = dev.id
+        self._by_camera.setdefault(address, {})[route_key(klass, channel)] = dev.id
         dev.updateStateOnServer("onOffState", False, clearErrorState=False)
         # A (re)start begins from a clean slate: _settle_device below decides the
         # device's fault afresh. This is the one deliberate clear outside a
@@ -471,15 +538,37 @@ class Plugin(indigo.PluginBase):
         # Per-device verdict, so one class failing does not condemn the others on
         # the same camera. Threaded: this is device startup, not a UI callback, but
         # it still makes HTTP calls and Indigo starts every device in turn.
-        threading.Thread(target=self._settle_device, args=(dev.id, address, klass),
-                         daemon=True, name=f"DahuaVerdict-{dev.id}").start()
+        self._start_settle(dev.id, address, klass, channel)
         self._ensure_worker(address)
-        self.logger.debug(f"deviceStartComm: {dev.name} ({address}, {klass})")
+        self.logger.debug(f"deviceStartComm: {dev.name} ({address}, {klass}, "
+                          f"channel {channel or 'any'})")
 
-    def _settle_device(self, dev_id, address, klass):
+    def _start_settle(self, dev_id, address, klass, channel=None):
+        """Run _settle_device in its own thread. The channel is passed only when
+        there is one, so a device for every channel calls it exactly as before."""
+        args = (dev_id, address, klass) + (() if channel is None else (channel,))
+        threading.Thread(target=self._settle_device, args=args,
+                         daemon=True, name=f"DahuaVerdict-{dev_id}").start()
+
+    def _route_clash(self, address, klass, channel, dev_id):
+        """The id of another RUNNING device on this camera that would hear the same
+        events as this one, or None. One event must reach one device (1.21), and
+        with channels (1.23) "the same events" means the same class on an
+        overlapping channel."""
+        for key, owner_id in self._by_camera.get(address, {}).items():
+            if (owner_id != dev_id and owner_id in self._timers
+                    and route_class(key) == klass
+                    and channels_overlap(route_channel(key), channel)):
+                return owner_id
+        return None
+
+    def _settle_device(self, dev_id, address, klass, channel=None):
         """Decide and show what this one device can actually do."""
         try:
-            verdict, reason = self._verdict_for(address, klass)
+            if channel is None:
+                verdict, reason = self._verdict_for(address, klass)
+            else:
+                verdict, reason = self._verdict_for(address, klass, channel)
             dev = indigo.devices.get(dev_id)
             if dev is None:
                 return
@@ -509,6 +598,14 @@ class Plugin(indigo.PluginBase):
                 dev.updateStateOnServer("streamState", blocked[0], clearErrorState=False)
                 dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
+            elif dahua_probe.login_refused_for(address, self.cam_user, self.cam_pass):
+                # The camera refused these details, heard by this check or by the
+                # stream, and is being left alone for a while (1.22). Say that,
+                # not "reconnecting", which reads as a network fault.
+                dev.updateStateOnServer("streamState", WORKER_LOGIN_REFUSED,
+                                        clearErrorState=False)
+                dev.setErrorStateOnServer("camera refused the login")
+                self.logger.error(f"{dev.name}: {reason}")
             else:
                 dev.updateStateOnServer("streamState", "reconnecting", clearErrorState=False)
                 self.logger.error(f"{dev.name}: {reason}")
@@ -522,9 +619,11 @@ class Plugin(indigo.PluginBase):
         self._blocked.pop(dev.id, None)
         if address in self._by_camera:
             # Only this device's own route. A duplicate that never took the route
-            # must not remove the device that holds it (1.21).
-            if self._by_camera[address].get(klass) == dev.id:
-                del self._by_camera[address][klass]
+            # must not remove the device that holds it (1.21). Matched on the id
+            # rather than rebuilt from the props, which may have just changed.
+            for key in [k for k, owner in self._by_camera[address].items()
+                        if owner == dev.id and route_class(k) == klass]:
+                del self._by_camera[address][key]
             # The stream is shared by the pair, so it only stops when the last
             # device using it goes. Stopping on the first would silently kill the
             # other half of the camera.
@@ -543,7 +642,8 @@ class Plugin(indigo.PluginBase):
         """
         old, new = oldDevice.pluginProps, newDevice.pluginProps
         return (old.get("address") != new.get("address")
-                or old.get("detectionClass") != new.get("detectionClass"))
+                or old.get("detectionClass") != new.get("detectionClass")
+                or str(old.get("channel", "")).strip() != str(new.get("channel", "")).strip())
 
     def _hold_for(self, dev):
         """Per-device override, falling back to the plugin default. Guarded: a
@@ -591,16 +691,18 @@ class Plugin(indigo.PluginBase):
         """An address as compared for duplicates: no spaces, any case."""
         return str(address or "").strip().lower()
 
-    def _route_owner(self, address, klass, exclude_ids=()):
-        """The other device of this plugin already watching this camera and class,
-        or None."""
+    def _route_owner(self, address, klass, exclude_ids=(), channel=None):
+        """The other device of this plugin already watching this camera and class
+        on an overlapping channel, or None."""
         wanted = self._norm_address(address)
         for dev in indigo.devices.iter("self"):
             if dev.id in exclude_ids:
                 continue
             props = dev.pluginProps
+            ok, their_channel = parse_channel(props.get("channel", ""))
             if (self._norm_address(props.get("address", "")) == wanted
-                    and props.get("detectionClass", "person") == klass):
+                    and props.get("detectionClass", "person") == klass
+                    and (not ok or channels_overlap(their_channel, channel))):
                 return dev
         return None
 
@@ -610,17 +712,23 @@ class Plugin(indigo.PluginBase):
         errors = indigo.Dict()
         address = str(valuesDict.get("address", "")).strip()
         klass = valuesDict.get("detectionClass", "person")
+        channel_ok, channel = parse_channel(valuesDict.get("channel", ""))
+        if not channel_ok:
+            errors["channel"] = (f"Enter the NVR channel, 1 to {MAX_CHANNEL}, or leave it "
+                                 f"blank for a camera.")
         if not address:
             errors["address"] = "Enter the camera's IP address or hostname."
-        else:
-            owner = self._route_owner(address, klass, exclude_ids=(devId,))
+        elif channel_ok:
+            owner = self._route_owner(address, klass, exclude_ids=(devId,), channel=channel)
             if owner is not None:
+                where = "" if channel is None else f" channel {channel}"
                 errors["detectionClass"] = (
-                    f"{owner.name} already watches this camera for "
-                    f"{CLASS_LABELS.get(klass, klass)}. Use that device, or delete it first.")
+                    f"{owner.name} already watches this camera{where} for "
+                    f"{CLASS_LABELS.get(klass, klass)}. Use that device, or delete it first. "
+                    f"A device with no channel hears every channel.")
         return (not bool(errors), valuesDict, errors)
 
-    def _verdict_for(self, address, klass):
+    def _verdict_for(self, address, klass, channel=None):
         """Ask the right question for this class.
 
         SMD asks 'can the firmware do it and is it switched on'. IVS asks that AND
@@ -628,16 +736,18 @@ class Plugin(indigo.PluginBase):
         the event and never fires — healthy-looking and permanently silent, which
         is the exact failure this plugin was built to refuse.
         """
+        index = None if channel is None else channel - 1     # the camera counts from 0
         if klass in IVS_CLASSES:
-            return dahua_probe.probe_ivs(address, self.cam_user, self.cam_pass, klass)
+            return dahua_probe.probe_ivs(address, self.cam_user, self.cam_pass, klass,
+                                         channel_index=index)
         if klass == "doorbell":
             return dahua_probe.probe_doorbell(address, self.cam_user, self.cam_pass)
-        return dahua_probe.probe(address, self.cam_user, self.cam_pass)
+        return dahua_probe.probe(address, self.cam_user, self.cam_pass, channel_index=index)
 
     def _codes_for_camera(self, address):
         """The union of event codes the devices on this camera actually need."""
-        return {CLASS_CODES[k] for k in self._by_camera.get(address, {})
-                if k in CLASS_CODES} or set(dahua_probe.SMART_CODES)
+        return {CLASS_CODES[route_class(k)] for k in self._by_camera.get(address, {})
+                if route_class(k) in CLASS_CODES} or set(dahua_probe.SMART_CODES)
 
     def _mark_error(self, dev, reason):
         try:
@@ -707,9 +817,9 @@ class Plugin(indigo.PluginBase):
         if action.sensorAction == indigo.kSensorAction.RequestStatus:
             address = dev.pluginProps.get("address", "").strip()
             klass = dev.pluginProps.get("detectionClass", "person")
+            _ok, channel = parse_channel(dev.pluginProps.get("channel", ""))
             self.logger.info(f"{dev.name}: re-checking the camera...")
-            threading.Thread(target=self._settle_device, args=(dev.id, address, klass),
-                             daemon=True, name=f"DahuaVerdict-{dev.id}").start()
+            self._start_settle(dev.id, address, klass, channel)
         elif action.sensorAction in (indigo.kSensorAction.TurnOn,
                                      indigo.kSensorAction.TurnOff,
                                      indigo.kSensorAction.Toggle):
@@ -796,6 +906,9 @@ class Plugin(indigo.PluginBase):
                 if status == "unsupported":
                     dev.setErrorStateOnServer(
                     dahua_probe.ascii_only(detail) or "camera cannot emit smart detections")
+                elif status == WORKER_LOGIN_REFUSED:
+                    # Shown in red until the stream connects again (1.22).
+                    dev.setErrorStateOnServer("camera refused the login")
                 elif status == "connected":
                     dev.setErrorStateOnServer("")
             if detail:
@@ -842,7 +955,12 @@ class Plugin(indigo.PluginBase):
         klass = next((k for k, code in CLASS_CODES.items() if code == event.code), None)
         if klass is None:
             return
-        dev_id = self._by_camera.get(address, {}).get(klass)
+        # The device for this event's own channel, else the one for every channel
+        # (1.23). Both cannot exist: _route_clash refuses the second.
+        routes = self._by_camera.get(address, {})
+        dev_id = routes.get(route_key(klass, event.index + 1))
+        if dev_id is None:
+            dev_id = routes.get(klass)
         if dev_id is None:
             return
         timer = self._timers.get(dev_id)
@@ -850,8 +968,28 @@ class Plugin(indigo.PluginBase):
         if timer is None or dev is None:
             return
 
-        changed = timer.start(now) if event.action == "Start" else timer.stop(now)
+        # The channel goes to the timer too, so a device hearing every channel
+        # stays on until all of them have stopped.
+        #
+        # Three actions, each handled by name (1.24). Everything that was not
+        # "Start" used to count as a Stop, so an event the camera reports as a
+        # single moment (action=Pulse) never switched its device on at all, and
+        # any action this plugin has not met would have ended a real detection.
         if event.action == "Start":
+            changed = timer.start(now, event.index)
+        elif event.action == "Stop":
+            changed = timer.stop(now, event.index)
+        elif event.action == "Pulse":
+            changed = timer.pulse(now, event.index)
+        else:
+            if (event.code, event.action) not in self._unknown_actions:
+                self._unknown_actions.add((event.code, event.action))
+                self.logger.warning(
+                    f"{dev.name}: the camera sent {event.code} with action "
+                    f"{event.action!r}, which this plugin does not know, so it was "
+                    f"ignored. Please report it. This is said once per kind.")
+            return
+        if event.action in ("Start", "Pulse"):
             dev.updateStateOnServer("lastDetection",
                                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     clearErrorState=False)
@@ -957,6 +1095,7 @@ class Plugin(indigo.PluginBase):
             dev = indigo.devices.get(dev_id)
             if dev is not None and dev.pluginProps.get("address"):
                 values["address"] = dev.pluginProps["address"]
+                values["channel"] = dev.pluginProps.get("channel", "")
                 values["cameraName"] = dev.name.rsplit(" ", 1)[0]
                 break
         return (values, errors)
@@ -978,7 +1117,12 @@ class Plugin(indigo.PluginBase):
             valuesDict["capabilitySummary"] = "Enter the camera's address first."
             return valuesDict
 
-        caps = dahua_probe.capabilities(address, self.cam_user, self.cam_pass)
+        channel_ok, channel = parse_channel(valuesDict.get("channel", ""))
+        if not channel_ok:
+            valuesDict["capabilitySummary"] = f"Channel must be blank or 1 to {MAX_CHANNEL}."
+            return valuesDict
+        caps = dahua_probe.capabilities(address, self.cam_user, self.cam_pass,
+                                        channel_index=None if channel is None else channel - 1)
         valuesDict["capabilitySummary"] = dahua_probe.summarise(caps)
 
         # Tick what works, and leave what does not — but never silently UNTICK
@@ -998,11 +1142,16 @@ class Plugin(indigo.PluginBase):
             errors["address"] = "Enter the camera's IP address or hostname."
         if not valuesDict.get("cameraName", "").strip():
             errors["cameraName"] = "Give the camera a name, e.g. Drive."
+        channel_ok, channel = parse_channel(valuesDict.get("channel", ""))
+        if not channel_ok:
+            errors["channel"] = (f"Enter the NVR channel, 1 to {MAX_CHANNEL}, or leave it "
+                                 f"blank for a camera.")
         address = valuesDict.get("address", "").strip()
-        if address and "address" not in errors:
+        if address and "address" not in errors and channel_ok:
             wanted = [k for k in CLASS_LABELS
                       if valuesDict.get(f"want_{k}", k in DEFAULT_CLASSES)]
-            taken = [self._route_owner(address, k, exclude_ids=tuple(devIdList))
+            taken = [self._route_owner(address, k, exclude_ids=tuple(devIdList),
+                                       channel=channel)
                      for k in wanted]
             taken = [d for d in taken if d is not None]
             if taken:
@@ -1017,6 +1166,8 @@ class Plugin(indigo.PluginBase):
         address = dahua_probe.ascii_only(valuesDict.get("address", "")).strip()
         name    = dahua_probe.ascii_only(valuesDict.get("cameraName", "")).strip()
         hold    = dahua_probe.ascii_only(valuesDict.get("holdOverride", "")).strip()
+        _ok, channel = parse_channel(valuesDict.get("channel", ""))
+        channel_prop = "" if channel is None else str(channel)
 
         # The capability summary is a DISPLAY field. It must not travel any further:
         # Indigo persists the factory's dialog values, and a runtime string reaching
@@ -1040,7 +1191,7 @@ class Plugin(indigo.PluginBase):
                     name=f"{name} {label}",
                     deviceTypeId=DEVICE_TYPE,
                     props={"address": address, "detectionClass": klass,
-                           "holdOverride": hold,
+                           "holdOverride": hold, "channel": channel_prop,
                            "SupportsOnState": True, "SupportsSensorValue": False})
                 dev.model   = MODEL_NAME
                 dev.subType = label

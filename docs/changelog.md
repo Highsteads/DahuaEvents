@@ -7,6 +7,22 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.25 — 1 November 2026
+
+**Detections passed on as soon as they arrive.** The plugin waits for the camera's connection to have something new, then reads it. But the part of Python that reads the connection takes in more than it is asked for and keeps the rest aside, and the plugin's wait could not see that. So a message could sit there, already received, until the camera next sent anything, which is its "still here" message every five seconds. It happened when a long message, or two messages close together, arrived at once, and more often with cameras that send their stream in pieces of a stated size (called chunked). It affected a detection starting as much as one stopping, so a device could switch on late, or stay on longer than it should. Now the plugin looks in that store first, every time. It made no difference to how fast the plugin stops.
+
+## 1.24 — 1 November 2026
+
+**Detections reported as a single moment.** A camera normally says when a detection starts and again when it stops. Some events can instead arrive as one message, called a pulse, meaning it happened and is already over. The plugin treated anything that was not a start as a stop, so a pulse never switched its device on, and nothing said why. Now a pulse switches the device on, it holds for the usual time, and then switches off, just like a short detection, and it counts in **Detections today**. A message of any other kind the plugin does not know is now ignored rather than read as a stop, with one warning in the Event Log naming it, so it can be reported.
+
+## 1.23 — 1 November 2026
+
+**Cameras on an NVR.** An NVR sends the detections for all its cameras on one connection, and says which channel each one came from. The plugin ignored that, so a device pointed at an NVR switched on for a person on any channel, and a detection ending on one channel could start switching it off while another channel was still seeing someone. Its checks also only ever looked at the first channel's settings. Now a device has an **NVR channel** setting. Fill it in and the device hears only that channel, and **Check This Camera** and **Send Status Request** look at that channel's settings and drawn rules. Leave it blank, as for an ordinary camera, and the device hears every channel as before, but stays on until every channel that started a detection has finished. Two devices that would hear the same detections, such as one for channel 2 and one for every channel, are refused when you save the second.
+
+## 1.22 — 1 November 2026
+
+**A wrong password no longer locks the camera's account.** When the camera turned down the username or password, the plugin quietly tried the same password five more times, then treated it like a dropped connection and did it all again every minute. Dahua cameras lock an account after a few failed logins, so a password changed on the camera but not in Indigo kept that account locked, including for an NVR or phone app using it. Now each login sends the password once, and a refusal is remembered for that camera: nothing else asks it with the same details for 30 minutes, so a plugin start, which checks every device at the same moment, costs the camera one failed login in all. Until a camera has accepted the details, the plugin asks it one thing at a time, so the first refusal stops the rest. When the camera refuses it, the camera's devices show **Camera refused the login** in red, the Event Log says so, and the plugin waits 30 minutes before trying again, in case the camera has only locked the account for a while. Saving new details in **Configure** reconnects at once.
+
 ## 1.21 — 5 October 2026
 
 **A device no longer gets stuck on.** The camera says when a detection starts and again when it stops. If the second message never arrived, because the camera rebooted or its connection dropped in between, the device stayed on until the next detection of the same kind, which on a quiet camera could be hours. Now, when a camera's connection drops or is replaced, any of its devices that are on switch off after the usual hold, unless the camera reports something new in the meantime.

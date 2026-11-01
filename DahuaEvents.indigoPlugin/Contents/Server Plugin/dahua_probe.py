@@ -14,10 +14,33 @@
 #              no sockets, no clock, no indigo import — so it runs under test with no
 #              hardware. The network layer is a thin shell at the bottom.
 # Author:      CliveS & Claude Sonnet 5
-# Date:        06-09-2026
-# Version:     1.2
+# Date:        01-11-2026
+# Version:     1.4
+#
+# v1.4 (01-11-2026): the checks can be asked about ONE channel of an NVR
+# (channel_index, 0-based like the camera's own tables and event lines). They
+# used to read only the [0] entries, so channel 3's device was judged on
+# channel 1's settings, and an IVS rule drawn on any channel counted for all.
+# channel_index=None keeps the old behaviour exactly.
+#
+# v1.3 (01-11-2026): a wrong password is sent ONCE per request, not six times.
+# urllib's HTTPDigestAuthHandler retries a rejected login on its own until its
+# counter passes 5, so every request with a wrong password cost the camera six
+# failed logins, which is enough to lock a Dahua account. _OneTryDigestAuthHandler
+# stops after the first refusal. Shared with dahua_worker via make_opener().
+#
+# Also v1.3: one refusal is remembered per camera, so a camera that refuses the
+# login is not asked again with the same details for LOGIN_RETRY (30 minutes).
+# Without it, a plugin start sent the wrong password once for the stream and once
+# more for every device's capability check, all at the same moment. Until a camera
+# has accepted the current details, its requests go one at a time, so the first
+# refusal stops the rest. Only a hash of the details is kept, never the password.
 
+import contextlib
+import hashlib
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -81,8 +104,16 @@ def parse_event_list(text):
     return {m.group(1) for m in re.finditer(r"events\[\d+\]=(\w+)", text)}
 
 
-def parse_enable_flag(text, param):
-    """Return True/False for a `table.<param>[0].Enable=` line, or None if absent.
+def _on_channel(channel_index):
+    """' on channel N' for a reason line, numbered as the NVR shows it; '' when
+    no channel was asked about."""
+    return "" if channel_index is None else f" on channel {channel_index + 1}"
+
+
+def parse_enable_flag(text, param, channel_index=None):
+    """Return True/False for a `table.<param>[N].Enable=` line, or None if absent.
+
+    N is channel_index, 0 when it is None: a single camera's only channel.
 
     None is a THIRD value and must stay distinct from False: 'the camera did not tell
     us' is not 'the camera says no'. Collapsing them is how an absent reading gets
@@ -90,14 +121,18 @@ def parse_enable_flag(text, param):
     """
     if not text:
         return None
-    m = re.search(rf"{re.escape(param)}\[0\]\.Enable=(\w+)", text)
+    index = 0 if channel_index is None else int(channel_index)
+    m = re.search(rf"{re.escape(param)}\[{index}\]\.Enable=(\w+)", text)
     if not m:
         return None
     return m.group(1).strip().lower() == "true"
 
 
-def parse_rules(rule_text):
+def parse_rules(rule_text, channel_index=None):
     """Return [(rule_type, enabled, name)] from a VideoAnalyseRule config body.
+
+    The first [n] is the channel. channel_index=None takes rules from every
+    channel, as before 1.4; a number takes only that channel's.
 
     Lines look like:
         table.VideoAnalyseRule[0][2].Class=CrossLineDetection   (shape A)
@@ -130,10 +165,11 @@ def parse_rules(rule_text):
         slots.setdefault((ch, idx), {})[key] = val
     return [(d.get("Type") or d.get("Class", ""),
              d.get("Enable", "").lower() == "true", d.get("Name", ""))
-            for _, d in sorted(slots.items())]
+            for (ch, _), d in sorted(slots.items())
+            if channel_index is None or ch == str(int(channel_index))]
 
 
-def assess_ivs(event_text, rule_text, klass):
+def assess_ivs(event_text, rule_text, klass, channel_index=None):
     """Can this camera emit the IVS event for `klass`? Returns (verdict, reason).
 
     Two separate questions, and conflating them is the whole risk:
@@ -155,11 +191,12 @@ def assess_ivs(event_text, rule_text, klass):
     if rule_text is None:
         return UNREACHABLE, "could not read the camera's analytics rules"
 
-    rules = parse_rules(rule_text)
+    rules = parse_rules(rule_text, channel_index)
     matching = [r for r in rules if r[0] == code]
+    where = _on_channel(channel_index)
     if not matching:
         return (NO_RULE,
-                f"the firmware supports {code} but no such rule is drawn on the camera — "
+                f"the firmware supports {code} but no such rule is drawn{where} — "
                 f"add one in the camera's own web interface, then restart this device")
     if not any(enabled for _, enabled, _ in matching):
         names = ", ".join(n or "unnamed" for _, _, n in matching)
@@ -172,8 +209,8 @@ def assess_ivs(event_text, rule_text, klass):
         # the camera" — a real, different, actionable diagnosis thrown away.
         # Found 06-09-2026 disabling a real rule on Patio as a live test.
         return (DISABLED,
-                f"a {code} rule exists ({names}) but is switched off at the camera")
-    return CAPABLE, f"an enabled {code} rule is drawn on the camera"
+                f"a {code} rule exists ({names}) but is switched off at the camera{where}")
+    return CAPABLE, f"an enabled {code} rule is drawn{where or ' on the camera'}"
 
 
 def parse_device_type(text):
@@ -206,7 +243,7 @@ def assess_doorbell(event_text, type_text):
             f"advertise {DOORBELL_CODE}")
 
 
-def assess(event_text, smd_text, motion_text):
+def assess(event_text, smd_text, motion_text, channel_index=None):
     """Decide what a camera can actually do. Returns (verdict, reason).
 
     Order matters. Capability is judged FIRST and only from the advertised event
@@ -224,11 +261,13 @@ def assess(event_text, smd_text, motion_text):
                 "firmware does not advertise " + " or ".join(missing) +
                 " — it cannot emit smart detections however it is configured")
 
-    smd    = parse_enable_flag(smd_text, "SmartMotionDetect")
-    motion = parse_enable_flag(motion_text, "MotionDetect")
+    smd    = parse_enable_flag(smd_text, "SmartMotionDetect", channel_index)
+    motion = parse_enable_flag(motion_text, "MotionDetect", channel_index)
+    where  = _on_channel(channel_index)
 
     if smd is None or motion is None:
-        return UNREACHABLE, "could not read the SmartMotionDetect / MotionDetect settings"
+        return (UNREACHABLE,
+                f"could not read the SmartMotionDetect / MotionDetect settings{where}")
 
     # SMD filters motion events rather than replacing them, so MotionDetect being off
     # makes SMD a no-op no matter what SMD itself says. The camera even reverts SMD to
@@ -239,9 +278,9 @@ def assess(event_text, smd_text, motion_text):
     if not smd:
         off.append("SmartMotionDetect")
     if off:
-        return DISABLED, " and ".join(off) + " switched off on the camera"
+        return DISABLED, " and ".join(off) + f" switched off{where or ' on the camera'}"
 
-    return CAPABLE, "advertises and has enabled human and vehicle detection"
+    return CAPABLE, f"advertises and has enabled human and vehicle detection{where}"
 
 
 def describe(verdict, reason, address):
@@ -261,15 +300,126 @@ def describe(verdict, reason, address):
 # Network shell — thin, and the only part that needs a camera
 # ============================================================
 
-def _opener(url, user, password):
+class _OneTryDigestAuthHandler(urllib.request.HTTPDigestAuthHandler):
+    """Digest login that sends the password once, and stops if it is refused.
+
+    The standard handler answers a 401 by retrying, and when the retry is
+    refused it retries again, until an internal counter passes 5. Every retry
+    is a failed login on the camera: measured 01-11-2026 against a local server
+    that refuses everything, one request made 7 calls, 6 of them carrying the
+    wrong password. Dahua cameras lock an account after a few failed logins, so
+    that alone could lock it, and the stream retries for ever.
+
+    Request.get_header() looks at the header the retry adds, so a 401 on a
+    request that already carries an Authorization header means "this password
+    was refused", and it is reported at once instead of tried again.
+    """
+
+    def http_error_401(self, req, fp, code, msg, headers):
+        if req.get_header(self.auth_header):
+            raise urllib.error.HTTPError(req.full_url, 401, LOGIN_REFUSED_TEXT,
+                                         headers, fp)
+        return super().http_error_401(req, fp, code, msg, headers)
+
+
+# The text of the HTTPError raised above. No URL, user or password in it.
+LOGIN_REFUSED_TEXT = "login refused"
+
+
+def is_login_refused(exc):
+    """True when an exception means the camera turned the credentials down."""
+    return isinstance(exc, urllib.error.HTTPError) and exc.code == 401
+
+
+def make_opener(url, user, password):
+    """An opener that logs in with Digest, or Basic for old cameras, trying the
+    password at most once per request. Used by fetch() and by the stream worker."""
     mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     mgr.add_password(None, url, user, password)
     # Digest first: it is what current firmware wants. Basic is kept for older
-    # cameras that never learned digest.
+    # cameras that never learned digest; urllib's Basic handler already gives up
+    # after one refused try.
     return urllib.request.build_opener(
-        urllib.request.HTTPDigestAuthHandler(mgr),
+        _OneTryDigestAuthHandler(mgr),
         urllib.request.HTTPBasicAuthHandler(mgr),
     )
+
+
+
+
+# ============================================================
+# Login memory - one refusal per camera, not one per request
+# ============================================================
+
+# How long a camera that refused a username and password is left alone with
+# those same details. Dahua locks an account after a few failed logins, and a
+# locked account refuses even the right password until the lock times out, so
+# this still tries again rather than giving up. Saving different details in
+# Configure, or reloading the plugin, ends the wait at once.
+LOGIN_RETRY = 1800
+
+_GOOD    = "good"
+_REFUSED = "refused"
+
+_logins_lock = threading.Lock()
+_logins      = {}           # address -> (details hash, _GOOD or _REFUSED, monotonic time)
+_first_try   = {}           # address -> Lock, held while the details are unproven
+
+
+def _details_key(user, password):
+    """A hash, so this module never holds a second copy of the password."""
+    return hashlib.sha256(f"{user}\0{password}".encode("utf-8")).hexdigest()
+
+
+def _norm(address):
+    return str(address or "").strip().lower()
+
+
+def login_refused_for(address, user, password, now=None):
+    """Seconds left before this camera is asked again with these details, or 0.
+
+    0 means go ahead: the details have not been refused, or the refusal was for
+    different details, or LOGIN_RETRY has passed since it.
+    """
+    now = time.monotonic() if now is None else now
+    with _logins_lock:
+        entry = _logins.get(_norm(address))
+    if not entry or entry[0] != _details_key(user, password) or entry[1] != _REFUSED:
+        return 0
+    return max(0.0, entry[2] + LOGIN_RETRY - now)
+
+
+def record_login(address, user, password, accepted, now=None):
+    """Remember whether this camera accepted these details. Called by fetch() and
+    by the stream worker after every answer that says either way."""
+    now = time.monotonic() if now is None else now
+    with _logins_lock:
+        _logins[_norm(address)] = (_details_key(user, password),
+                                   _GOOD if accepted else _REFUSED, now)
+
+
+def forget_logins():
+    """Clear the memory. For tests; a plugin reload starts empty anyway."""
+    with _logins_lock:
+        _logins.clear()
+        _first_try.clear()
+
+
+def _one_at_a_time(address, user, password):
+    """Until a camera has accepted these details, its requests take turns, so
+    that a refusal is known before the next one sends the password. Once the
+    details are accepted, requests run side by side as before."""
+    key = _norm(address)
+    with _logins_lock:
+        entry = _logins.get(key)
+        if entry and entry[0] == _details_key(user, password) and entry[1] == _GOOD:
+            return contextlib.nullcontext()
+        return _first_try.setdefault(key, threading.Lock())
+
+
+REFUSED_REASON = ("the camera refused the username or password; it will not be "
+                  "asked again for up to 30 minutes, or until you save new details "
+                  "in Configure or reload the plugin")
 
 
 def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
@@ -279,14 +429,25 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
     sweep of seven. The caller distinguishes None from empty.
     """
     url = f"http://{address}{path}"
-    try:
-        return _opener(url, user, password).open(url, timeout=timeout).read().decode(
-            "utf-8", errors="replace")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
-        return None
+    if login_refused_for(address, user, password):
+        return None                     # refused lately: do not add a failed login
+    with _one_at_a_time(address, user, password):
+        if login_refused_for(address, user, password):
+            return None                 # refused while this request waited its turn
+        try:
+            body = make_opener(url, user, password).open(url, timeout=timeout).read().decode(
+                "utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            if is_login_refused(exc):
+                record_login(address, user, password, accepted=False)
+            return None
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        record_login(address, user, password, accepted=True)
+        return body
 
 
-def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
+def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT, channel_index=None):
     """Ask one camera whether an IVS class will actually fire. NEVER raises."""
     try:
         if not address:
@@ -296,10 +457,12 @@ def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return UNREACHABLE, REFUSED_REASON
             return UNREACHABLE, "no answer on port 80"
         rules = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
                       user, password, timeout)
-        return assess_ivs(events, rules, klass)
+        return assess_ivs(events, rules, klass, channel_index)
     except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
@@ -314,6 +477,8 @@ def probe_doorbell(address, user, password, timeout=HTTP_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return UNREACHABLE, REFUSED_REASON
             return UNREACHABLE, "no answer on port 80"
         dtype = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
                       user, password, timeout)
@@ -322,7 +487,7 @@ def probe_doorbell(address, user, password, timeout=HTTP_TIMEOUT):
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
-def probe(address, user, password, timeout=HTTP_TIMEOUT):
+def probe(address, user, password, timeout=HTTP_TIMEOUT, channel_index=None):
     """Ask one camera what it can do. Returns (verdict, reason). NEVER raises.
 
     fetch() deliberately catches only the expected network errors, so a genuine bug
@@ -332,12 +497,12 @@ def probe(address, user, password, timeout=HTTP_TIMEOUT):
     reported in the reason rather than swallowed.
     """
     try:
-        return _probe(address, user, password, timeout)
+        return _probe(address, user, password, timeout, channel_index)
     except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
-def _probe(address, user, password, timeout=HTTP_TIMEOUT):
+def _probe(address, user, password, timeout=HTTP_TIMEOUT, channel_index=None):
     if not address:
         return UNREACHABLE, "no address configured"
     if not user or not password:
@@ -346,13 +511,15 @@ def _probe(address, user, password, timeout=HTTP_TIMEOUT):
     events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                    user, password, timeout)
     if events is None:
+        if login_refused_for(address, user, password):
+            return UNREACHABLE, REFUSED_REASON
         return UNREACHABLE, "no answer on port 80 (wrong address, credentials, or camera down)"
 
     smd = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=SmartMotionDetect",
                 user, password, timeout)
     motion = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=MotionDetect",
                    user, password, timeout)
-    return assess(events, smd, motion)
+    return assess(events, smd, motion, channel_index)
 
 
 def firmware(address, user, password, timeout=HTTP_TIMEOUT):
@@ -373,7 +540,7 @@ def firmware(address, user, password, timeout=HTTP_TIMEOUT):
 DIALOG_TIMEOUT = 4
 
 
-def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
+def capabilities(address, user, password, timeout=DIALOG_TIMEOUT, channel_index=None):
     """What can this camera actually do? Returns {class: (verdict, reason)}.
 
     Answers for every class the plugin knows, so a dialog can show the whole
@@ -390,6 +557,8 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return {k: (UNREACHABLE, REFUSED_REASON) for k in classes}
             return {k: (UNREACHABLE, "no answer from the camera") for k in classes}
 
         smd    = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=SmartMotionDetect",
@@ -402,10 +571,10 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         dtype  = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
                        user, password, timeout)
 
-        smd_verdict = assess(events, smd, motion)
+        smd_verdict = assess(events, smd, motion, channel_index)
         out = {"person": smd_verdict, "vehicle": smd_verdict}
         for klass in IVS_CODES:
-            out[klass] = assess_ivs(events, rules, klass)
+            out[klass] = assess_ivs(events, rules, klass, channel_index)
         out["doorbell"] = assess_doorbell(events, dtype)
         return out
     except Exception as exc:                    # noqa: BLE001 - a dialog must not throw

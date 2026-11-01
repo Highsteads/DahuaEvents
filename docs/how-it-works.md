@@ -9,7 +9,7 @@ You do not need to know any of this to use the plugin. It is here for anyone who
 
 ## The camera tells the plugin
 
-The plugin does not look at any pictures. For each camera it opens one connection and leaves it open, and the camera sends a short message down it whenever a detection starts or stops. The camera also sends a small "still here" message every five seconds, so the plugin knows the connection is alive even when nothing is happening.
+The plugin does not look at any pictures. For each camera it opens one connection and leaves it open, and the camera sends a short message down it whenever a detection starts or stops. Some detections arrive as one message instead, meaning it happened and is already over; the plugin treats that as a start with its stop straight after. The camera also sends a small "still here" message every five seconds, so the plugin knows the connection is alive even when nothing is happening.
 
 A camera with several devices — a Person and a Vehicle, say — still has only one connection, shared between them.
 
@@ -36,6 +36,8 @@ The answer belongs to that one device, so a camera whose people detection works 
 ## When a camera drops out
 
 If the camera closes the connection, or goes 20 seconds without even a "still here" message, the plugin sets the camera's devices to **Reconnecting**, writes a warning to the Event Log, and tries again after one second. Each failed try doubles the wait, up to one minute, so a camera that is off for a while is asked once a minute until it comes back. When it does, the devices show **Connected** again.
+
+If the camera turns down the username or password, the devices show **Camera refused the login** instead, and the plugin waits 30 minutes before trying again. Trying sooner would only add failed logins, and Dahua cameras lock an account after a few of them. Saving new details in **Configure** reconnects straight away.
 
 A camera whose firmware cannot send any of the detections its devices need is not asked again at all, because asking more often will not change its firmware. Its devices say so instead.
 
