@@ -2,7 +2,7 @@
 
 **Turn a Dahua camera's own person and vehicle detection, and a video doorbell's button, into Indigo sensors.**
 
-**Version:** 1.24 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
+**Version:** 1.25 | **Author:** CliveS & Claude | **Needs:** Indigo 2022.1 or later
 
 **[Read the full guide](https://highsteads.github.io/DahuaEvents/)** — setting up, what everything means, and what to do when something goes wrong.
 
@@ -46,6 +46,8 @@ The plugin uses one camera username and password for every camera.
 The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each step, explains what to switch on in the camera, and covers what to do if something does not work.
 
 ## What's new
+
+**v1.25** — A detection could reach Indigo up to five seconds late, or its end could, because the message sat unseen inside the plugin until the camera next sent anything. Now every message is passed on as soon as it arrives.
 
 **v1.24** — Some cameras report a detection as a single moment, with no separate start and stop. The plugin used to read that as a stop, so the device never switched on. Now it switches on, holds as usual, and switches off. Any message the plugin does not recognise is ignored, with one warning in the Event Log, rather than switching a device off.
 

@@ -7,6 +7,10 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.25 — 1 November 2026
+
+**Detections passed on as soon as they arrive.** The plugin waits for the camera's connection to have something new, then reads it. But the part of Python that reads the connection takes in more than it is asked for and keeps the rest aside, and the plugin's wait could not see that. So a message could sit there, already received, until the camera next sent anything, which is its "still here" message every five seconds. It happened when a long message, or two messages close together, arrived at once, and more often with cameras that send their stream in pieces of a stated size (called chunked). It affected a detection starting as much as one stopping, so a device could switch on late, or stay on longer than it should. Now the plugin looks in that store first, every time. It made no difference to how fast the plugin stops.
+
 ## 1.24 — 1 November 2026
 
 **Detections reported as a single moment.** A camera normally says when a detection starts and again when it stops. Some events can instead arrive as one message, called a pulse, meaning it happened and is already over. The plugin treated anything that was not a start as a stop, so a pulse never switched its device on, and nothing said why. Now a pulse switches the device on, it holds for the usual time, and then switches off, just like a short detection, and it counts in **Detections today**. A message of any other kind the plugin does not know is now ignored rather than read as a stop, with one warning in the Event Log naming it, so it can be reported.

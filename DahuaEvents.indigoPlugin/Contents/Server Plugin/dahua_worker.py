@@ -14,7 +14,16 @@
 #              off, then stop.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        01-11-2026
-# Version:     1.2
+# Version:     1.3
+#
+# v1.3 (01-11-2026): an event already read off the socket is no longer left
+# waiting for the next packet. select() watches the SOCKET, but Python's HTTP
+# layer reads ahead into its own buffer: with chunked transfer encoding it takes
+# in several chunks and returns one, and the response headers bring in whatever
+# arrived with them. select() then saw an empty socket while events sat in that
+# buffer, until the next heartbeat (5 s) or packet. Reproduced with a real
+# socket server (tests/test_stream_buffering.py), where the events did not
+# arrive at all. _buffered() now looks in that buffer before select() waits.
 #
 # v1.2 (01-11-2026): a refused login is no longer retried every minute. The
 # stream used to treat a 401 like any dropped connection: "reconnecting", then
@@ -41,6 +50,7 @@
 # than relying on the watchdog knowing to be lenient with this plugin.
 
 import select
+import socket
 import threading
 import time
 
@@ -167,11 +177,14 @@ class CameraWorker(threading.Thread):
         last_reaffirm = last_data
 
         while not self._stop.is_set():
-            try:
-                readable, _, _ = select.select([self._response], [], [], SELECT_TICK)
-            except (OSError, ValueError):
-                # The response was closed under us — that is a stop, not a fault.
-                return
+            if self._buffered():
+                readable = True        # already read off the socket: select() cannot see it
+            else:
+                try:
+                    readable, _, _ = select.select([self._response], [], [], SELECT_TICK)
+                except (OSError, ValueError):
+                    # The response was closed under us — that is a stop, not a fault.
+                    return
             if not readable:
                 now = time.monotonic()
                 if now - last_data > READ_TIMEOUT:
@@ -247,6 +260,43 @@ class CameraWorker(threading.Thread):
                 break
             backoff = min(backoff * 2, BACKOFF_MAX)
         self._set_status(STOPPED)
+
+    def _buffered(self):
+        """True when the response holds stream data that select() cannot see.
+
+        Looks without waiting: the socket is made non-blocking for a peek() and
+        put back as it was. Only waiting is avoided, never data lost: peek()
+        moves bytes into the buffer and leaves them there for read1().
+
+        A buffer holding only line ends is reported as empty. In a chunked stream
+        that is the CRLF after a chunk, which Python only discards on the NEXT
+        read, and that read would then sit waiting for the next chunk's size
+        line, out of reach of the stop flag.
+
+        Reaches the socket through the response's raw reader (`fp.raw._sock`),
+        which Python does not document. If that is ever missing this returns
+        False, which is exactly the behaviour before v1.3, and
+        tests/test_stream_buffering.py fails so it is noticed.
+        """
+        fp = getattr(self._response, "fp", None)
+        sock = getattr(getattr(fp, "raw", None), "_sock", None)
+        if fp is None or not isinstance(sock, socket.socket):
+            return False
+        try:
+            previous = sock.gettimeout()
+        except OSError:
+            return False
+        try:
+            sock.settimeout(0)
+            waiting = fp.peek(1)
+        except (OSError, ValueError):
+            return False
+        finally:
+            try:
+                sock.settimeout(previous)
+            except OSError:
+                pass
+        return bool(waiting.strip(b"\r\n"))
 
     def _login_wait(self):
         """Seconds to wait before these details may be tried on this camera, or 0.

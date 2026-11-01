@@ -50,7 +50,10 @@
 #              single moment: on, the usual hold, then off. Anything other
 #              than Start, Stop or Pulse is ignored with one warning per kind,
 #              instead of being treated as a Stop.
-# Version:     1.24
+#              1.25 (01-11-2026) passes on events as soon as they arrive. Some
+#              could wait in Python's own read-ahead buffer, unseen, until the
+#              camera next sent anything (up to 5 seconds), see dahua_worker 1.3.
+# Version:     1.25
 try:
     import indigo
 except ImportError:
@@ -96,7 +99,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.24"
+PLUGIN_VERSION = "1.25"
 
 DEFAULT_HOLD_SECONDS = 20
 
