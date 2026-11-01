@@ -22,8 +22,19 @@
 # counter passes 5, so every request with a wrong password cost the camera six
 # failed logins, which is enough to lock a Dahua account. _OneTryDigestAuthHandler
 # stops after the first refusal. Shared with dahua_worker via make_opener().
+#
+# Also v1.3: one refusal is remembered per camera, so a camera that refuses the
+# login is not asked again with the same details for LOGIN_RETRY (30 minutes).
+# Without it, a plugin start sent the wrong password once for the stream and once
+# more for every device's capability check, all at the same moment. Until a camera
+# has accepted the current details, its requests go one at a time, so the first
+# refusal stops the rest. Only a hash of the details is kept, never the password.
 
+import contextlib
+import hashlib
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -314,6 +325,81 @@ def make_opener(url, user, password):
 
 
 
+# ============================================================
+# Login memory - one refusal per camera, not one per request
+# ============================================================
+
+# How long a camera that refused a username and password is left alone with
+# those same details. Dahua locks an account after a few failed logins, and a
+# locked account refuses even the right password until the lock times out, so
+# this still tries again rather than giving up. Saving different details in
+# Configure, or reloading the plugin, ends the wait at once.
+LOGIN_RETRY = 1800
+
+_GOOD    = "good"
+_REFUSED = "refused"
+
+_logins_lock = threading.Lock()
+_logins      = {}           # address -> (details hash, _GOOD or _REFUSED, monotonic time)
+_first_try   = {}           # address -> Lock, held while the details are unproven
+
+
+def _details_key(user, password):
+    """A hash, so this module never holds a second copy of the password."""
+    return hashlib.sha256(f"{user}\0{password}".encode("utf-8")).hexdigest()
+
+
+def _norm(address):
+    return str(address or "").strip().lower()
+
+
+def login_refused_for(address, user, password, now=None):
+    """Seconds left before this camera is asked again with these details, or 0.
+
+    0 means go ahead: the details have not been refused, or the refusal was for
+    different details, or LOGIN_RETRY has passed since it.
+    """
+    now = time.monotonic() if now is None else now
+    with _logins_lock:
+        entry = _logins.get(_norm(address))
+    if not entry or entry[0] != _details_key(user, password) or entry[1] != _REFUSED:
+        return 0
+    return max(0.0, entry[2] + LOGIN_RETRY - now)
+
+
+def record_login(address, user, password, accepted, now=None):
+    """Remember whether this camera accepted these details. Called by fetch() and
+    by the stream worker after every answer that says either way."""
+    now = time.monotonic() if now is None else now
+    with _logins_lock:
+        _logins[_norm(address)] = (_details_key(user, password),
+                                   _GOOD if accepted else _REFUSED, now)
+
+
+def forget_logins():
+    """Clear the memory. For tests; a plugin reload starts empty anyway."""
+    with _logins_lock:
+        _logins.clear()
+        _first_try.clear()
+
+
+def _one_at_a_time(address, user, password):
+    """Until a camera has accepted these details, its requests take turns, so
+    that a refusal is known before the next one sends the password. Once the
+    details are accepted, requests run side by side as before."""
+    key = _norm(address)
+    with _logins_lock:
+        entry = _logins.get(key)
+        if entry and entry[0] == _details_key(user, password) and entry[1] == _GOOD:
+            return contextlib.nullcontext()
+        return _first_try.setdefault(key, threading.Lock())
+
+
+REFUSED_REASON = ("the camera refused the username or password; it will not be "
+                  "asked again for up to 30 minutes, or until you save new details "
+                  "in Configure or reload the plugin")
+
+
 def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
     """GET one CGI path. Returns the body, or None on any failure.
 
@@ -321,11 +407,22 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
     sweep of seven. The caller distinguishes None from empty.
     """
     url = f"http://{address}{path}"
-    try:
-        return make_opener(url, user, password).open(url, timeout=timeout).read().decode(
-            "utf-8", errors="replace")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
-        return None
+    if login_refused_for(address, user, password):
+        return None                     # refused lately: do not add a failed login
+    with _one_at_a_time(address, user, password):
+        if login_refused_for(address, user, password):
+            return None                 # refused while this request waited its turn
+        try:
+            body = make_opener(url, user, password).open(url, timeout=timeout).read().decode(
+                "utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            if is_login_refused(exc):
+                record_login(address, user, password, accepted=False)
+            return None
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        record_login(address, user, password, accepted=True)
+        return body
 
 
 def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
@@ -338,6 +435,8 @@ def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return UNREACHABLE, REFUSED_REASON
             return UNREACHABLE, "no answer on port 80"
         rules = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
                       user, password, timeout)
@@ -356,6 +455,8 @@ def probe_doorbell(address, user, password, timeout=HTTP_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return UNREACHABLE, REFUSED_REASON
             return UNREACHABLE, "no answer on port 80"
         dtype = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
                       user, password, timeout)
@@ -388,6 +489,8 @@ def _probe(address, user, password, timeout=HTTP_TIMEOUT):
     events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                    user, password, timeout)
     if events is None:
+        if login_refused_for(address, user, password):
+            return UNREACHABLE, REFUSED_REASON
         return UNREACHABLE, "no answer on port 80 (wrong address, credentials, or camera down)"
 
     smd = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=SmartMotionDetect",
@@ -432,6 +535,8 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         events = fetch(address, "/cgi-bin/eventManager.cgi?action=getExposureEvents",
                        user, password, timeout)
         if events is None:
+            if login_refused_for(address, user, password):
+                return {k: (UNREACHABLE, REFUSED_REASON) for k in classes}
             return {k: (UNREACHABLE, "no answer from the camera") for k in classes}
 
         smd    = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=SmartMotionDetect",

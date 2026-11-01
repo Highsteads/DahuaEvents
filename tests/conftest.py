@@ -9,7 +9,7 @@
 #              on there being exactly one sys.modules["indigo"].
 # Author:      CliveS & Claude Opus 5.5
 # Date:        01-11-2026
-# Version:     1.0
+# Version:     1.1
 
 import os
 import sys
@@ -33,3 +33,13 @@ _install_stubs()
 def plugin():
     """A fresh Plugin instance built on the shared indigo stand-in."""
     return make_plugin(holdSeconds="20", maxDetectionMinutes="10")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_login_memory():
+    """dahua_probe remembers refused logins per camera for 30 minutes. Each test
+    starts with that memory empty, so one test's refusal cannot leak into another."""
+    import dahua_probe
+    dahua_probe.forget_logins()
+    yield
+    dahua_probe.forget_logins()

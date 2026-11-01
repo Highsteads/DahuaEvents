@@ -13,9 +13,12 @@
 #                  probe reason, or the Show Plugin Info banner
 #                - the plugin shows the refusal on the device, clears it on
 #                  reconnect, and a probe does not paint over it
+#                - one refusal is remembered per camera: a plugin start (the
+#                  stream and several device checks at once) sends a wrong
+#                  password ONCE in all, and the memory holds no password
 # Author:      CliveS & Claude Opus 5.5
 # Date:        01-11-2026
-# Version:     1.1
+# Version:     1.2
 
 import http.server
 import queue
@@ -150,11 +153,12 @@ def test_a_refused_stream_says_so_and_does_not_retry_soon(refusing_camera):
     worker.start()
     try:
         assert seen.wait(10), f"no LOGIN_REFUSED status after a refused login: {statuses}"
-        tries = handler.with_password       # capability check + one stream connect
+        tries = handler.with_password
         # The old loop retried after 1s and then 2s; this must stay put.
         time.sleep(3.5)
         assert handler.with_password == tries, "the worker retried a refused login early"
-        assert tries <= 2, f"{tries} failed logins before the worker settled"
+        # The capability check is refused, and the stream does not try again.
+        assert tries == 1, f"{tries} failed logins before the worker settled"
     finally:
         worker.stop()
         worker.join(5)
@@ -212,13 +216,11 @@ def test_a_refused_login_shows_on_the_device_in_red():
     assert dev.errorState == "camera refused the login"
 
 
-def test_reconnecting_clears_the_refusal_flag_only_when_connected():
+def test_connecting_again_clears_the_refusal_from_the_device():
     dev = FakeDevice(1, "Drive Person")
     p = _plugin_with(dev)
     _status(p, dahua_worker.LOGIN_REFUSED, "x")
-    assert ADDRESS in p._login_refused
     _status(p, dahua_worker.CONNECTED)
-    assert ADDRESS not in p._login_refused
     assert dev.states["streamState"] == "connected"
     assert dev.errorState == ""
 
@@ -229,7 +231,8 @@ def test_a_failed_probe_does_not_paint_over_the_refusal():
     dev = FakeDevice(1, "Drive Person")
     p = _plugin_with(dev)
     _status(p, dahua_worker.LOGIN_REFUSED, "x")
-    p._verdict_for = lambda a, k: (dahua_probe.UNREACHABLE, "no answer on port 80")
+    dahua_probe.record_login(ADDRESS, p.cam_user, p.cam_pass, accepted=False)
+    p._verdict_for = lambda a, k: (dahua_probe.UNREACHABLE, dahua_probe.REFUSED_REASON)
     p._settle_device(dev.id, ADDRESS, "person")
     assert dev.states["streamState"] == "loginRefused"
     assert dev.errorState == "camera refused the login"
@@ -243,3 +246,100 @@ def test_a_device_that_is_on_starts_its_hold_when_the_login_is_refused():
     timer.start(time.monotonic())
     _status(p, dahua_worker.LOGIN_REFUSED, "x")
     assert timer.expires_at is not None, "a refused login must arm the normal hold"
+
+
+def test_a_check_that_hears_the_refusal_first_shows_it_on_the_device():
+    """At a plugin start a device's own check usually hears the refusal before
+    the stream's status reaches the device."""
+    dev = FakeDevice(1, "Drive Person")
+    p = _plugin_with(dev)
+    dahua_probe.record_login(ADDRESS, p.cam_user, p.cam_pass, accepted=False)
+    p._verdict_for = lambda a, k: (dahua_probe.UNREACHABLE, dahua_probe.REFUSED_REASON)
+    p._settle_device(dev.id, ADDRESS, "person")
+    assert dev.states["streamState"] == "loginRefused"
+    assert dev.errorState == "camera refused the login"
+
+
+def test_an_unreachable_camera_still_says_reconnecting():
+    dev = FakeDevice(1, "Drive Person")
+    p = _plugin_with(dev)
+    p._verdict_for = lambda a, k: (dahua_probe.UNREACHABLE, "no answer on port 80")
+    p._settle_device(dev.id, ADDRESS, "person")
+    assert dev.states["streamState"] == "reconnecting"
+
+
+# ------------------------------------------------------------ one refusal per camera
+
+def test_a_plugin_start_sends_a_wrong_password_once_in_all(refusing_camera):
+    """The stream's capability check and three devices' checks, all at once,
+    exactly as deviceStartComm starts them. Before 1.22 this was 6 failed logins
+    each; after the first fix, still one each."""
+    address, handler = refusing_camera
+    stop = threading.Event()
+    refused = threading.Event()
+    worker = CameraWorker(address, USER, PASSWORD, queue.Queue(), stop,
+                          status_cb=lambda a, s, d: s == dahua_worker.LOGIN_REFUSED
+                          and refused.set())
+    results = []
+    checks = [threading.Thread(target=lambda f=f: results.append(f(address, USER, PASSWORD)))
+              for f in (dahua_probe.probe,
+                        lambda a, u, pw: dahua_probe.probe_ivs(a, u, pw, "crossline"),
+                        dahua_probe.probe_doorbell)]
+    worker.start()
+    for t in checks:
+        t.start()
+    try:
+        for t in checks:
+            t.join(30)
+        assert refused.wait(10)
+        time.sleep(1.5)
+        assert handler.with_password == 1, f"{handler.with_password} failed logins"
+    finally:
+        worker.stop()
+        worker.join(5)
+    assert len(results) == 3
+    for verdict, reason in results:
+        assert verdict == dahua_probe.UNREACHABLE
+        assert reason == dahua_probe.REFUSED_REASON
+
+
+def test_later_checks_skip_the_camera_without_contacting_it(refusing_camera):
+    address, handler = refusing_camera
+    dahua_probe.probe(address, USER, PASSWORD, timeout=5)
+    hits = handler.hits
+    dahua_probe.probe(address, USER, PASSWORD, timeout=5)
+    caps = dahua_probe.capabilities(address, USER, PASSWORD)
+    assert handler.hits == hits, "a refused camera was asked again"
+    assert all(reason == dahua_probe.REFUSED_REASON for _, reason in caps.values())
+
+
+def test_different_details_are_tried_at_once(refusing_camera):
+    """Saving a new username or password in Configure must not wait 30 minutes."""
+    address, handler = refusing_camera
+    dahua_probe.fetch(address, "/x", USER, PASSWORD, timeout=5)
+    dahua_probe.fetch(address, "/x", USER, PASSWORD + "-new", timeout=5)
+    assert handler.with_password == 2
+
+
+def test_the_refusal_runs_out_after_login_retry():
+    dahua_probe.record_login(ADDRESS, USER, PASSWORD, accepted=False, now=1000.0)
+    assert dahua_probe.login_refused_for(ADDRESS, USER, PASSWORD, now=1001.0) > 0
+    assert dahua_probe.login_refused_for(
+        ADDRESS, USER, PASSWORD, now=1000.0 + dahua_probe.LOGIN_RETRY) == 0
+
+
+def test_an_accepted_login_ends_the_refusal():
+    dahua_probe.record_login(ADDRESS, USER, PASSWORD, accepted=False)
+    dahua_probe.record_login(ADDRESS, USER, PASSWORD, accepted=True)
+    assert dahua_probe.login_refused_for(ADDRESS, USER, PASSWORD) == 0
+
+
+def test_the_address_is_matched_whatever_its_case_or_spaces():
+    dahua_probe.record_login(" Cam-Drive.local ", USER, PASSWORD, accepted=False)
+    assert dahua_probe.login_refused_for("cam-drive.local", USER, PASSWORD) > 0
+
+
+def test_the_login_memory_holds_no_password_or_username():
+    dahua_probe.record_login(ADDRESS, USER, PASSWORD, accepted=False)
+    assert _no_secret(repr(dahua_probe._logins))
+    assert _no_secret(dahua_probe.REFUSED_REASON)

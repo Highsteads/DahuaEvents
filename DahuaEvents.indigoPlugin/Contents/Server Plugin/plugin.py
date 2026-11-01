@@ -38,7 +38,9 @@
 #              account: each login sends the password once instead of six
 #              times, a refused login shows "Camera refused the login" on the
 #              camera's devices instead of "Reconnecting", and the stream waits
-#              30 minutes before trying again instead of one minute.
+#              30 minutes before trying again instead of one minute. The
+#              capability checks share that refusal, so a start with a wrong
+#              password costs the camera one failed login, not one per device.
 # Version:     1.22
 try:
     import indigo
@@ -233,9 +235,6 @@ class Plugin(indigo.PluginBase):
                                               # settled verdict while camera-side config
                                               # (no rule / disabled / unsupported) blocks
                                               # it, None when it does not
-        self._login_refused = set()          # addresses whose stream was last refused
-                                              # the login; written on the main thread,
-                                              # read by _settle_device
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -518,13 +517,16 @@ class Plugin(indigo.PluginBase):
                 dev.updateStateOnServer("streamState", blocked[0], clearErrorState=False)
                 dev.setErrorStateOnServer(blocked[1])
                 self.logger.warning(f"{dev.name}: {reason}")
+            elif dahua_probe.login_refused_for(address, self.cam_user, self.cam_pass):
+                # The camera refused these details, heard by this check or by the
+                # stream, and is being left alone for a while (1.22). Say that,
+                # not "reconnecting", which reads as a network fault.
+                dev.updateStateOnServer("streamState", WORKER_LOGIN_REFUSED,
+                                        clearErrorState=False)
+                dev.setErrorStateOnServer("camera refused the login")
+                self.logger.error(f"{dev.name}: {reason}")
             else:
-                # A probe cannot tell a refused login from a camera that is away,
-                # but the stream can. If it has said the login was refused, keep
-                # saying so rather than overwrite it with "reconnecting" (1.22).
-                state = (WORKER_LOGIN_REFUSED if address in self._login_refused
-                         else "reconnecting")
-                dev.updateStateOnServer("streamState", state, clearErrorState=False)
+                dev.updateStateOnServer("streamState", "reconnecting", clearErrorState=False)
                 self.logger.error(f"{dev.name}: {reason}")
         except Exception:
             self.logger.exception(f"could not settle device {dev_id}")
@@ -777,10 +779,6 @@ class Plugin(indigo.PluginBase):
                 # left out: the worker re-affirms it every few minutes while
                 # healthy, and a fresh connection carries no news about old events.
                 self._stream_lost(address)
-            if status == WORKER_LOGIN_REFUSED:
-                self._login_refused.add(address)
-            elif status == "connected":
-                self._login_refused.discard(address)
             if status == WORKER_STOPPED:
                 # A worker we stopped on purpose. Since 1.18 that happens while
                 # the plugin runs (a camera's stream is replaced when a second

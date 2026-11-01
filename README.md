@@ -47,7 +47,7 @@ The [full guide](https://highsteads.github.io/DahuaEvents/) goes through each st
 
 ## What's new
 
-**v1.22** — A wrong camera password no longer keeps the camera's account locked. Before, each try sent the wrong password six times and the plugin tried again every minute, which is enough for a Dahua camera to lock the account, for your NVR and phone app too. Now the password is sent once, the devices show **Camera refused the login**, and the plugin waits 30 minutes before trying again. Saving a new password in **Configure** still reconnects straight away.
+**v1.22** — A wrong camera password no longer keeps the camera's account locked. Before, each try sent the wrong password six times and the plugin tried again every minute, which is enough for a Dahua camera to lock the account, for your NVR and phone app too. Now the camera is sent the wrong password once in all, even when the plugin starts and checks every device at the same moment. The devices show **Camera refused the login**, and the plugin waits 30 minutes before trying again. Saving a new password in **Configure** still reconnects straight away.
 
 **v1.21** — A device no longer stays on for hours when the camera's "stopped" message is lost, for instance because the camera rebooted mid-detection. When a camera's connection drops, any of its devices that are on switch off after the usual hold, and a new **Longest detection** setting, 10 minutes to start with, switches off one that hears nothing more. A second device for the same camera and detection is now refused.
 

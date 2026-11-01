@@ -23,6 +23,9 @@
 # few failures, a password changed on the camera but not in Indigo kept the
 # account locked, for the NVR and the phone app too. Now one try per connect, a
 # LOGIN_REFUSED status that says what happened, and the next try 30 minutes on.
+# The refusal is shared with dahua_probe's capability checks (login_refused_for /
+# record_login), so a refusal seen by EITHER stops both: a plugin start with a
+# wrong password costs the camera one failed login, not one per device.
 #
 # v1.1 (03-09-2026): CONNECTED is now re-affirmed periodically while a stream
 # stays open, healthy and silent — not just once, at open. status_cb used to
@@ -63,8 +66,9 @@ BACKOFF_MAX   = 60
 # only adds failed logins, and Dahua locks an account after a few of them; a
 # lock also refuses the RIGHT password until it times out, which is why this
 # still retries rather than giving up. New credentials saved in Configure start
-# a fresh worker at once, so fixing it in Indigo does not wait for this.
-LOGIN_RETRY   = 1800
+# a fresh worker at once, so fixing it in Indigo does not wait for this. The
+# number lives in dahua_probe so the stream and the checks keep the same wait.
+LOGIN_RETRY   = dahua_probe.LOGIN_RETRY
 
 # A camera sends a heartbeat every 5s. Three missed beats means the connection is
 # dead even though the socket is still nominally open — the classic half-open TCP
@@ -156,6 +160,8 @@ class CameraWorker(threading.Thread):
         """
         parser = StreamParser()
         self._response = self._open()
+        # The camera took these details, so the checks may run side by side again.
+        dahua_probe.record_login(self.address, self._user, self._password, accepted=True)
         self._set_status(CONNECTED)
         last_data = time.monotonic()
         last_reaffirm = last_data
@@ -205,6 +211,20 @@ class CameraWorker(threading.Thread):
 
         backoff = BACKOFF_START
         while not self._stop.is_set():
+            # A refusal is remembered per camera, whether the stream or a
+            # capability check heard it (the capability check just above, at a
+            # plugin start). While it stands, connecting would only add another
+            # failed login, so say so once and wait it out.
+            remaining = self._login_wait()
+            if remaining:
+                minutes = max(1, int(-(-remaining // 60)))      # round up
+                self._set_status(LOGIN_REFUSED,
+                                 f"the camera refused the username or password; "
+                                 f"trying again in {minutes} minute"
+                                 f"{'' if minutes == 1 else 's'}")
+                if self._stop.wait(remaining):
+                    break
+                continue
             wait = backoff
             try:
                 self._pump()
@@ -214,12 +234,11 @@ class CameraWorker(threading.Thread):
                 if self._stop.is_set():
                     break
                 if dahua_probe.is_login_refused(exc):
-                    # Not a network fault, so not "reconnecting": say what it is,
-                    # and do not hand the camera another failed login for a while.
-                    self._set_status(LOGIN_REFUSED,
-                                     f"the camera refused the username or password; "
-                                     f"trying again in {LOGIN_RETRY // 60} minutes")
-                    wait = LOGIN_RETRY
+                    # Not a network fault, so not "reconnecting". Recorded, and the
+                    # top of the loop reports it and waits.
+                    dahua_probe.record_login(self.address, self._user, self._password,
+                                             accepted=False)
+                    wait = 0
                 else:
                     self._set_status(RECONNECTING, f"{type(exc).__name__}: {exc}")
             finally:
@@ -228,6 +247,12 @@ class CameraWorker(threading.Thread):
                 break
             backoff = min(backoff * 2, BACKOFF_MAX)
         self._set_status(STOPPED)
+
+    def _login_wait(self):
+        """Seconds to wait before these details may be tried on this camera, or 0.
+        Never longer than LOGIN_RETRY, whatever the shared record says."""
+        remaining = dahua_probe.login_refused_for(self.address, self._user, self._password)
+        return min(remaining, LOGIN_RETRY) if remaining else 0
 
     def _close_response(self):
         if self._response is not None:
