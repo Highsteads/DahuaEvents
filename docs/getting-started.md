@@ -34,7 +34,7 @@ If you run several of my plugins you can keep these in one shared file instead, 
 
 1. In Indigo, create a **New Device** and set its **Type** to **DahuaEvents**. The camera dialog opens.
 2. Fill in **Camera name** — a short name such as `Drive`. The devices are named after it, so `Drive` gives `Drive Person` and `Drive Vehicle`. Keep to plain letters, numbers and spaces, because the plugin changes accented letters and the characters `&`, `<`, `>`, `"` and `'` into question marks.
-3. Fill in **Camera address** with the camera's network address.
+3. Fill in **Camera address** with the camera's network address. Leave **NVR channel** blank, unless the camera is on a Dahua NVR and you are using the NVR's address; then see [Cameras on an NVR](cameras.md#cameras-on-an-nvr).
 4. Click **Check This Camera**. The plugin asks the camera what it can do, shows the answer under **Camera reports**, and ticks each detection that will work. The [Your cameras](cameras.md) page explains the answers.
 5. Tick the detections you want, if the check did not already tick them: **People**, **Vehicles**, **Tripwire (line crossed)**, **Intrusion (zone entered)** or **Doorbell button**. People and Vehicles are ticked to start with.
 6. Leave **Hold override (seconds)** blank to use the plugin's 20 seconds.

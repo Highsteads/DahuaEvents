@@ -15,7 +15,13 @@
 #              hardware. The network layer is a thin shell at the bottom.
 # Author:      CliveS & Claude Sonnet 5
 # Date:        01-11-2026
-# Version:     1.3
+# Version:     1.4
+#
+# v1.4 (01-11-2026): the checks can be asked about ONE channel of an NVR
+# (channel_index, 0-based like the camera's own tables and event lines). They
+# used to read only the [0] entries, so channel 3's device was judged on
+# channel 1's settings, and an IVS rule drawn on any channel counted for all.
+# channel_index=None keeps the old behaviour exactly.
 #
 # v1.3 (01-11-2026): a wrong password is sent ONCE per request, not six times.
 # urllib's HTTPDigestAuthHandler retries a rejected login on its own until its
@@ -98,8 +104,16 @@ def parse_event_list(text):
     return {m.group(1) for m in re.finditer(r"events\[\d+\]=(\w+)", text)}
 
 
-def parse_enable_flag(text, param):
-    """Return True/False for a `table.<param>[0].Enable=` line, or None if absent.
+def _on_channel(channel_index):
+    """' on channel N' for a reason line, numbered as the NVR shows it; '' when
+    no channel was asked about."""
+    return "" if channel_index is None else f" on channel {channel_index + 1}"
+
+
+def parse_enable_flag(text, param, channel_index=None):
+    """Return True/False for a `table.<param>[N].Enable=` line, or None if absent.
+
+    N is channel_index, 0 when it is None: a single camera's only channel.
 
     None is a THIRD value and must stay distinct from False: 'the camera did not tell
     us' is not 'the camera says no'. Collapsing them is how an absent reading gets
@@ -107,14 +121,18 @@ def parse_enable_flag(text, param):
     """
     if not text:
         return None
-    m = re.search(rf"{re.escape(param)}\[0\]\.Enable=(\w+)", text)
+    index = 0 if channel_index is None else int(channel_index)
+    m = re.search(rf"{re.escape(param)}\[{index}\]\.Enable=(\w+)", text)
     if not m:
         return None
     return m.group(1).strip().lower() == "true"
 
 
-def parse_rules(rule_text):
+def parse_rules(rule_text, channel_index=None):
     """Return [(rule_type, enabled, name)] from a VideoAnalyseRule config body.
+
+    The first [n] is the channel. channel_index=None takes rules from every
+    channel, as before 1.4; a number takes only that channel's.
 
     Lines look like:
         table.VideoAnalyseRule[0][2].Class=CrossLineDetection   (shape A)
@@ -147,10 +165,11 @@ def parse_rules(rule_text):
         slots.setdefault((ch, idx), {})[key] = val
     return [(d.get("Type") or d.get("Class", ""),
              d.get("Enable", "").lower() == "true", d.get("Name", ""))
-            for _, d in sorted(slots.items())]
+            for (ch, _), d in sorted(slots.items())
+            if channel_index is None or ch == str(int(channel_index))]
 
 
-def assess_ivs(event_text, rule_text, klass):
+def assess_ivs(event_text, rule_text, klass, channel_index=None):
     """Can this camera emit the IVS event for `klass`? Returns (verdict, reason).
 
     Two separate questions, and conflating them is the whole risk:
@@ -172,11 +191,12 @@ def assess_ivs(event_text, rule_text, klass):
     if rule_text is None:
         return UNREACHABLE, "could not read the camera's analytics rules"
 
-    rules = parse_rules(rule_text)
+    rules = parse_rules(rule_text, channel_index)
     matching = [r for r in rules if r[0] == code]
+    where = _on_channel(channel_index)
     if not matching:
         return (NO_RULE,
-                f"the firmware supports {code} but no such rule is drawn on the camera — "
+                f"the firmware supports {code} but no such rule is drawn{where} — "
                 f"add one in the camera's own web interface, then restart this device")
     if not any(enabled for _, enabled, _ in matching):
         names = ", ".join(n or "unnamed" for _, _, n in matching)
@@ -189,8 +209,8 @@ def assess_ivs(event_text, rule_text, klass):
         # the camera" — a real, different, actionable diagnosis thrown away.
         # Found 06-09-2026 disabling a real rule on Patio as a live test.
         return (DISABLED,
-                f"a {code} rule exists ({names}) but is switched off at the camera")
-    return CAPABLE, f"an enabled {code} rule is drawn on the camera"
+                f"a {code} rule exists ({names}) but is switched off at the camera{where}")
+    return CAPABLE, f"an enabled {code} rule is drawn{where or ' on the camera'}"
 
 
 def parse_device_type(text):
@@ -223,7 +243,7 @@ def assess_doorbell(event_text, type_text):
             f"advertise {DOORBELL_CODE}")
 
 
-def assess(event_text, smd_text, motion_text):
+def assess(event_text, smd_text, motion_text, channel_index=None):
     """Decide what a camera can actually do. Returns (verdict, reason).
 
     Order matters. Capability is judged FIRST and only from the advertised event
@@ -241,11 +261,13 @@ def assess(event_text, smd_text, motion_text):
                 "firmware does not advertise " + " or ".join(missing) +
                 " — it cannot emit smart detections however it is configured")
 
-    smd    = parse_enable_flag(smd_text, "SmartMotionDetect")
-    motion = parse_enable_flag(motion_text, "MotionDetect")
+    smd    = parse_enable_flag(smd_text, "SmartMotionDetect", channel_index)
+    motion = parse_enable_flag(motion_text, "MotionDetect", channel_index)
+    where  = _on_channel(channel_index)
 
     if smd is None or motion is None:
-        return UNREACHABLE, "could not read the SmartMotionDetect / MotionDetect settings"
+        return (UNREACHABLE,
+                f"could not read the SmartMotionDetect / MotionDetect settings{where}")
 
     # SMD filters motion events rather than replacing them, so MotionDetect being off
     # makes SMD a no-op no matter what SMD itself says. The camera even reverts SMD to
@@ -256,9 +278,9 @@ def assess(event_text, smd_text, motion_text):
     if not smd:
         off.append("SmartMotionDetect")
     if off:
-        return DISABLED, " and ".join(off) + " switched off on the camera"
+        return DISABLED, " and ".join(off) + f" switched off{where or ' on the camera'}"
 
-    return CAPABLE, "advertises and has enabled human and vehicle detection"
+    return CAPABLE, f"advertises and has enabled human and vehicle detection{where}"
 
 
 def describe(verdict, reason, address):
@@ -425,7 +447,7 @@ def fetch(address, path, user, password, timeout=HTTP_TIMEOUT):
         return body
 
 
-def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
+def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT, channel_index=None):
     """Ask one camera whether an IVS class will actually fire. NEVER raises."""
     try:
         if not address:
@@ -440,7 +462,7 @@ def probe_ivs(address, user, password, klass, timeout=HTTP_TIMEOUT):
             return UNREACHABLE, "no answer on port 80"
         rules = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=VideoAnalyseRule",
                       user, password, timeout)
-        return assess_ivs(events, rules, klass)
+        return assess_ivs(events, rules, klass, channel_index)
     except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
@@ -465,7 +487,7 @@ def probe_doorbell(address, user, password, timeout=HTTP_TIMEOUT):
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
-def probe(address, user, password, timeout=HTTP_TIMEOUT):
+def probe(address, user, password, timeout=HTTP_TIMEOUT, channel_index=None):
     """Ask one camera what it can do. Returns (verdict, reason). NEVER raises.
 
     fetch() deliberately catches only the expected network errors, so a genuine bug
@@ -475,12 +497,12 @@ def probe(address, user, password, timeout=HTTP_TIMEOUT):
     reported in the reason rather than swallowed.
     """
     try:
-        return _probe(address, user, password, timeout)
+        return _probe(address, user, password, timeout, channel_index)
     except Exception as exc:                    # noqa: BLE001 - the contract is "never raises"
         return UNREACHABLE, f"unexpected error probing this camera: {exc!r}"
 
 
-def _probe(address, user, password, timeout=HTTP_TIMEOUT):
+def _probe(address, user, password, timeout=HTTP_TIMEOUT, channel_index=None):
     if not address:
         return UNREACHABLE, "no address configured"
     if not user or not password:
@@ -497,7 +519,7 @@ def _probe(address, user, password, timeout=HTTP_TIMEOUT):
                 user, password, timeout)
     motion = fetch(address, "/cgi-bin/configManager.cgi?action=getConfig&name=MotionDetect",
                    user, password, timeout)
-    return assess(events, smd, motion)
+    return assess(events, smd, motion, channel_index)
 
 
 def firmware(address, user, password, timeout=HTTP_TIMEOUT):
@@ -518,7 +540,7 @@ def firmware(address, user, password, timeout=HTTP_TIMEOUT):
 DIALOG_TIMEOUT = 4
 
 
-def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
+def capabilities(address, user, password, timeout=DIALOG_TIMEOUT, channel_index=None):
     """What can this camera actually do? Returns {class: (verdict, reason)}.
 
     Answers for every class the plugin knows, so a dialog can show the whole
@@ -549,10 +571,10 @@ def capabilities(address, user, password, timeout=DIALOG_TIMEOUT):
         dtype  = fetch(address, "/cgi-bin/magicBox.cgi?action=getDeviceType",
                        user, password, timeout)
 
-        smd_verdict = assess(events, smd, motion)
+        smd_verdict = assess(events, smd, motion, channel_index)
         out = {"person": smd_verdict, "vehicle": smd_verdict}
         for klass in IVS_CODES:
-            out[klass] = assess_ivs(events, rules, klass)
+            out[klass] = assess_ivs(events, rules, klass, channel_index)
         out["doorbell"] = assess_doorbell(events, dtype)
         return out
     except Exception as exc:                    # noqa: BLE001 - a dialog must not throw

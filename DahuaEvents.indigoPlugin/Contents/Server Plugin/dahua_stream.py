@@ -14,8 +14,14 @@
 #              of the interesting behaviour be tested with no camera and no waiting,
 #              including the once-a-year cases a live test would never reach.
 # Author:      CliveS & Claude Opus 5
-# Date:        05-10-2026
-# Version:     1.1
+# Date:        01-11-2026
+# Version:     1.2
+#
+# v1.2 (01-11-2026): HoldTimer tracks WHICH channels are detecting. On an NVR
+# every channel shares one stream, and a device listening to all of them used to
+# start its switch-off countdown on a Stop from channel 2 while channel 1 was
+# still detecting. start() and stop() now take the event's channel index, and the
+# off is scheduled only when every channel that started has stopped.
 
 import queue as _queue
 import re
@@ -134,6 +140,13 @@ class HoldTimer:
     Every method takes `now` and returns whether the on/off state CHANGED, so the
     caller writes to Indigo only on a real transition. Re-asserting an unchanged
     state would churn the state table and the SQL logger for nothing.
+
+    start() and stop() also take `source`, the event's channel index (1.2). One
+    camera only ever sends 0, so nothing changes there. A device fed by several
+    NVR channels stays on until every channel that started has stopped: a Stop
+    from a channel that is not active does nothing. A channel whose Stop is lost
+    is cleared with everything else when the device switches off, by the hold,
+    stream_lost() or the cap, so it cannot keep the device on past the cap.
     """
 
     def __init__(self, hold_seconds, max_on_seconds=0):
@@ -142,6 +155,7 @@ class HoldTimer:
         self._on = False
         self._expires_at = None
         self._last_start = None
+        self._active = set()             # channel indexes that started, not yet stopped
         self.cleared_by_cap = False
 
     @property
@@ -152,34 +166,49 @@ class HoldTimer:
     def expires_at(self):
         return self._expires_at
 
+    @property
+    def active_sources(self):
+        """Channel indexes currently detecting. For diagnostics and tests."""
+        return frozenset(self._active)
+
     def _switch_off(self, by_cap=False):
         self._on = False
         self._expires_at = None
         self._last_start = None
+        self._active.clear()
         self.cleared_by_cap = by_cap
 
-    def start(self, now):
+    def _schedule_off(self, now):
+        """The hold begins. Returns True only for hold=0, where it is now."""
+        if self.hold_seconds == 0:
+            self._switch_off()
+            return True
+        self._expires_at = now + self.hold_seconds
+        return False
+
+    def start(self, now, source=0):
         """A detection began, or continues. Returns True if this switched it on."""
         self._expires_at = None          # actively detecting: nothing pending
         self._last_start = now           # the cap counts from the latest Start
+        self._active.add(source)
         if self._on:
             return False
         self._on = True
         self.cleared_by_cap = False
         return True
 
-    def stop(self, now):
+    def stop(self, now, source=0):
         """A detection ended. Schedules the off; never switches off immediately.
 
-        Returns True only in the degenerate hold=0 case, where 'later' is now.
+        Only when no other channel is still detecting. Returns True only in the
+        degenerate hold=0 case, where 'later' is now.
         """
         if not self._on:
             return False
-        if self.hold_seconds == 0:
-            self._switch_off()
-            return True
-        self._expires_at = now + self.hold_seconds
-        return False
+        self._active.discard(source)
+        if self._active:
+            return False                 # another channel is still detecting
+        return self._schedule_off(now)
 
     def stream_lost(self, now):
         """The camera's stream dropped or was replaced, so a Stop may never come.
@@ -190,7 +219,8 @@ class HoldTimer:
         """
         if not self._on or self._expires_at is not None:
             return False
-        return self.stop(now)
+        self._active.clear()             # every channel's Stop may be lost
+        return self._schedule_off(now)
 
     def _cap_at(self):
         if self.max_on_seconds and self._on and self._last_start is not None:
