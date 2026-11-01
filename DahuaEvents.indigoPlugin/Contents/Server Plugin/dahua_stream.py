@@ -15,7 +15,12 @@
 #              including the once-a-year cases a live test would never reach.
 # Author:      CliveS & Claude Opus 5
 # Date:        01-11-2026
-# Version:     1.2
+# Version:     1.3
+#
+# v1.3 (01-11-2026): HoldTimer.pulse() for an event the camera reports as a
+# single moment (action=Pulse) rather than a Start and a later Stop. The plugin
+# used to read anything that was not "Start" as a Stop, so a Pulse never switched
+# a device on at all.
 #
 # v1.2 (01-11-2026): HoldTimer tracks WHICH channels are detecting. On an NVR
 # every channel shares one stream, and a device listening to all of them used to
@@ -209,6 +214,27 @@ class HoldTimer:
         if self._active:
             return False                 # another channel is still detecting
         return self._schedule_off(now)
+
+    def pulse(self, now, source=0):
+        """A detection that is over as soon as it happens (action=Pulse).
+
+        On, then the normal hold, then off: the same as a Start with its Stop
+        straight after, so a trigger sees it exactly as it would a short
+        detection. Two differences from calling start() then stop():
+          - a Pulse on a channel already in a Start leaves that Start running,
+            rather than ending it
+          - with a hold of 0 the off waits for the next tick() rather than
+            happening now, so the device is genuinely on for a moment and a
+            trigger on it still fires
+        Returns True if this switched it on.
+        """
+        was_active = source in self._active
+        changed = self.start(now, source)
+        if not was_active:
+            self._active.discard(source)
+            if not self._active:
+                self._expires_at = now + self.hold_seconds
+        return changed
 
     def stream_lost(self, now):
         """The camera's stream dropped or was replaced, so a Stop may never come.

@@ -46,7 +46,11 @@
 #              hears only that channel, and its checks read that channel's
 #              settings. A device with none hears every channel, as before, but
 #              now stays on until every channel that started has stopped.
-# Version:     1.23
+#              1.24 (01-11-2026) handles action=Pulse, an event reported as a
+#              single moment: on, the usual hold, then off. Anything other
+#              than Start, Stop or Pulse is ignored with one warning per kind,
+#              instead of being treated as a Stop.
+# Version:     1.24
 try:
     import indigo
 except ImportError:
@@ -92,7 +96,7 @@ except ImportError:
 # ============================================================
 
 PLUGIN_ID      = "com.clives.indigoplugin.dahuaevents"
-PLUGIN_VERSION = "1.23"
+PLUGIN_VERSION = "1.24"
 
 DEFAULT_HOLD_SECONDS = 20
 
@@ -283,6 +287,7 @@ class Plugin(indigo.PluginBase):
                                               # settled verdict while camera-side config
                                               # (no rule / disabled / unsupported) blocks
                                               # it, None when it does not
+        self._unknown_actions = set()        # (code, action) already warned about
         self._counter_day = datetime.now().strftime("%Y-%m-%d")
 
         # Boot logs nothing — Indigo's own start line is enough (25-05-2026 convention).
@@ -962,11 +967,26 @@ class Plugin(indigo.PluginBase):
 
         # The channel goes to the timer too, so a device hearing every channel
         # stays on until all of them have stopped.
+        #
+        # Three actions, each handled by name (1.24). Everything that was not
+        # "Start" used to count as a Stop, so an event the camera reports as a
+        # single moment (action=Pulse) never switched its device on at all, and
+        # any action this plugin has not met would have ended a real detection.
         if event.action == "Start":
             changed = timer.start(now, event.index)
-        else:
+        elif event.action == "Stop":
             changed = timer.stop(now, event.index)
-        if event.action == "Start":
+        elif event.action == "Pulse":
+            changed = timer.pulse(now, event.index)
+        else:
+            if (event.code, event.action) not in self._unknown_actions:
+                self._unknown_actions.add((event.code, event.action))
+                self.logger.warning(
+                    f"{dev.name}: the camera sent {event.code} with action "
+                    f"{event.action!r}, which this plugin does not know, so it was "
+                    f"ignored. Please report it. This is said once per kind.")
+            return
+        if event.action in ("Start", "Pulse"):
             dev.updateStateOnServer("lastDetection",
                                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     clearErrorState=False)

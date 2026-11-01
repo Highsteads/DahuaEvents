@@ -7,6 +7,10 @@ nav_order: 10
 
 The newest version is at the top.
 
+## 1.24 — 1 November 2026
+
+**Detections reported as a single moment.** A camera normally says when a detection starts and again when it stops. Some events can instead arrive as one message, called a pulse, meaning it happened and is already over. The plugin treated anything that was not a start as a stop, so a pulse never switched its device on, and nothing said why. Now a pulse switches the device on, it holds for the usual time, and then switches off, just like a short detection, and it counts in **Detections today**. A message of any other kind the plugin does not know is now ignored rather than read as a stop, with one warning in the Event Log naming it, so it can be reported.
+
 ## 1.23 — 1 November 2026
 
 **Cameras on an NVR.** An NVR sends the detections for all its cameras on one connection, and says which channel each one came from. The plugin ignored that, so a device pointed at an NVR switched on for a person on any channel, and a detection ending on one channel could start switching it off while another channel was still seeing someone. Its checks also only ever looked at the first channel's settings. Now a device has an **NVR channel** setting. Fill it in and the device hears only that channel, and **Check This Camera** and **Send Status Request** look at that channel's settings and drawn rules. Leave it blank, as for an ordinary camera, and the device hears every channel as before, but stays on until every channel that started a detection has finished. Two devices that would hear the same detections, such as one for channel 2 and one for every channel, are refused when you save the second.

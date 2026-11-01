@@ -9,7 +9,7 @@ You do not need to know any of this to use the plugin. It is here for anyone who
 
 ## The camera tells the plugin
 
-The plugin does not look at any pictures. For each camera it opens one connection and leaves it open, and the camera sends a short message down it whenever a detection starts or stops. The camera also sends a small "still here" message every five seconds, so the plugin knows the connection is alive even when nothing is happening.
+The plugin does not look at any pictures. For each camera it opens one connection and leaves it open, and the camera sends a short message down it whenever a detection starts or stops. Some detections arrive as one message instead, meaning it happened and is already over; the plugin treats that as a start with its stop straight after. The camera also sends a small "still here" message every five seconds, so the plugin knows the connection is alive even when nothing is happening.
 
 A camera with several devices — a Person and a Vehicle, say — still has only one connection, shared between them.
 
